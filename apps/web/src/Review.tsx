@@ -1,5 +1,8 @@
-// #/review — approve, reject or fix SAM's draft masks. Talks to ml/draft_server.py on localhost:5055.
-// Only masks approved here become training data, so this page is where ground truth is made.
+// #/review — check SAM's draft masks ONE FLY AT A TIME. Talks to ml/draft_server.py on localhost:5055.
+// Only approved flies become training data, so this page is where ground truth is made.
+// Two ways to fix a part:
+//   SAM click     click spots on the part, press Make <part>; Smaller / Bigger step through SAM's outlines
+//   Draw outline  click the corners of a shape around the region, press Make <part> (or Erase) to fill it
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { misorderedFlies, type RGB } from '@flymorph/core';
 import { decode } from './decode';
@@ -8,11 +11,14 @@ import { Overlay } from './Overlay';
 const API = 'http://127.0.0.1:5055';
 const TARGET = 60;
 export const PART_COLORS: Record<number, [number, number, number]> = { 1: [255, 60, 60], 2: [40, 120, 255], 3: [80, 220, 80] };
-const PART_NAMES = ['', 'head', 'thorax', 'abdomen'];
+const PART_NAMES = ['background', 'head', 'thorax', 'abdomen'];
 const color = (l: number) => PART_COLORS[l] ?? null;
 
-type Item = { sha: string; session: string };
+type Box = [number, number, number, number]; // x0, y0, x1, y1 in photo pixels
+type Item = { sha: string; fly: number; flies: number; box: Box; session: string };
 type Point = [number, number, 0 | 1];
+type Tool = 'sam' | 'draw';
+type Kind = 'approve' | 'reject' | 'flip' | 'refine' | 'paint' | 'reset' | 'undo' | 'skip';
 
 const post = (path: string, body: object) =>
   fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -22,15 +28,27 @@ async function loadLabels(sha: string): Promise<Uint8Array> {
   return Uint8Array.from({ length: data.length / 4 }, (_, i) => data[i * 4]); // gray PNG → R channel = label
 }
 
+// Cut one fly's box out of the full photo and label map, so the page shows (and edits) a single fly.
+function crop(img: RGB, labels: Uint8Array, [x0, y0, x1, y1]: Box) {
+  const w = x1 - x0, h = y1 - y0, data = new Uint8ClampedArray(w * h * 4), lab = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    data.set(img.data.subarray(((y + y0) * img.w + x0) * 4, ((y + y0) * img.w + x1) * 4), y * w * 4);
+    lab.set(labels.subarray((y + y0) * img.w + x0, (y + y0) * img.w + x1), y * w);
+  }
+  return { img: { w, h, data } as RGB, labels: lab };
+}
+
 export function Review() {
   const [queue, setQueue] = useState<Item[]>([]);
   const [counts, setCounts] = useState({ approved: 0, rejected: 0 });
-  const [img, setImg] = useState<RGB | null>(null);
+  const [photo, setPhoto] = useState<RGB | null>(null);
   const [labels, setLabels] = useState<Uint8Array | null>(null);
-  const [points, setPoints] = useState<Point[]>([]);
+  const [tool, setTool] = useState<Tool>('sam');
+  const [points, setPoints] = useState<Point[]>([]); // photo coordinates
+  const [polygon, setPolygon] = useState<[number, number][]>([]); // photo coordinates
   const [status, setStatus] = useState('');
   const [confirmBad, setConfirmBad] = useState(false); // approving a fly that fails the anatomy check needs 2 presses
-  const [lastFix, setLastFix] = useState<{ part: number; pick: number; pts: Point[] } | null>(null); // for Smaller / Bigger
+  const [lastFix, setLastFix] = useState<{ part: number; pick: number; pts: Point[] } | null>(null); // Smaller / Bigger
   const current = queue[0];
 
   const refresh = useCallback(async () => {
@@ -43,97 +61,111 @@ export function Review() {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
+  // the photo only reloads when the photo changes; moving to its next fly keeps it
   useEffect(() => {
     if (!current) return;
-    setImg(null); setLabels(null); setPoints([]); setLastFix(null); setConfirmBad(false);
+    setPhoto(null); setLabels(null);
     (async () => {
-      setImg(await decode(await (await fetch(`${API}/img/${current.sha}`)).blob()));
+      setPhoto(await decode(await (await fetch(`${API}/img/${current.sha}`)).blob()));
       setLabels(await loadLabels(current.sha));
     })();
   }, [current?.sha]);
+  useEffect(() => { setPoints([]); setPolygon([]); setLastFix(null); setConfirmBad(false); }, [current?.sha, current?.fly]);
 
-  // part is only used by 'refine': the fix names its part at the moment it is applied (no hidden mode).
-  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'undo' | 'skip', part = 0, pick = 0,
-    pts: Point[] = points) => {
+  const view = useMemo(() => (photo && labels && current ? crop(photo, labels, current.box) : null), [photo, labels, current]);
+  const bad = useMemo(() => (view ? misorderedFlies(view.labels, view.img.w, view.img.h) : []), [view]);
+
+  const act = useCallback(async (kind: Kind, part = 0, pick = 0, pts: Point[] = points) => {
     if (!current) return;
     if (kind === 'skip') { setQueue((q) => [...q.slice(1), q[0]]); return; }
-    if (kind === 'approve' && img && labels && misorderedFlies(labels, img.w, img.h).length && !confirmBad) {
+    if (kind === 'refine' && !pts.length) { setStatus('First click spots on the part, then choose what they are.'); return; }
+    if (kind === 'paint' && polygon.length < 3) { setStatus('Click at least 3 corners around the region first.'); return; }
+    if (kind === 'approve' && bad.length && !confirmBad) {
       setConfirmBad(true);
-      setStatus('A fly here has its head and abdomen on the same side of the thorax (marked ✕), so a part is probably mislabelled. Fix it, or press Approve again to approve anyway.');
+      setStatus('This fly has its head and abdomen on the same side of the thorax (✕), so a part is probably wrong. Fix it, or press Approve again to approve anyway.');
       return;
     }
-    if (kind === 'refine' && !pts.length) { setStatus('First click the spots on the fly, then choose what they are.'); return; }
-    setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' ? '' : 'SAM is thinking…');
-    const res = await post(`/api/${kind}`, { sha: current.sha, part, points: pts, pick });
-    if (kind === 'undo' && !res.ok) { setStatus('Nothing to undo on this fly.'); return; }
-    if (kind === 'flip' || kind === 'refine' || kind === 'reset' || kind === 'undo') {
-      setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
-      // keep the clicks after a fix so Smaller / Bigger can re-ask SAM with the same spots
-      if (kind === 'refine') setLastFix({ part, pick, pts }); else setPoints([]);
-    }
-    else refresh();
-  }, [current, points, refresh, img, labels, confirmBad]);
+    setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' || kind === 'paint' ? '' : 'SAM is thinking…');
+    const res = await post(`/api/${kind}`, { sha: current.sha, fly: current.fly, box: current.box, part, points: pts, pick, polygon });
+    if (!res.ok) { setStatus(kind === 'undo' ? 'Nothing to undo on this photo.' : `Server said no (${res.status}).`); return; }
+    if (kind === 'approve' || kind === 'reject') { refresh(); return; }
+    setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
+    if (kind === 'refine') setLastFix({ part, pick, pts });
+    if (kind === 'paint') setPolygon([]);
+    if (kind === 'reset' || kind === 'flip') { setPoints([]); setPolygon([]); }
+  }, [current, points, polygon, refresh, bad, confirmBad]);
+
+  const make = useCallback((part: number) => (tool === 'draw' ? act('paint', part) : part ? act('refine', part) : undefined), [tool, act]);
+  const resize = useCallback((d: number) => {
+    if (lastFix && lastFix.pick + d >= 0 && lastFix.pick + d <= 2) act('refine', lastFix.part, lastFix.pick + d, lastFix.pts);
+  }, [lastFix, act]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();
       const map: Record<string, () => void> = {
-        z: () => act('undo'),
-        '-': () => lastFix && lastFix.pick > 0 && act('refine', lastFix.part, lastFix.pick - 1, lastFix.pts),
-        '=': () => lastFix && lastFix.pick < 2 && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts),
-        '+': () => lastFix && lastFix.pick < 2 && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts),
-        a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'),
-        '1': () => act('refine', 1), '2': () => act('refine', 2), '3': () => act('refine', 3), escape: () => setPoints([]),
+        a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'), z: () => act('undo'),
+        '0': () => make(0), '1': () => make(1), '2': () => make(2), '3': () => make(3),
+        '-': () => resize(-1), '=': () => resize(1), '+': () => resize(1), d: () => setTool((t) => (t === 'sam' ? 'draw' : 'sam')),
+        escape: () => { setPoints([]); setPolygon([]); },
       };
-      map[k]?.();
+      map[e.key.toLowerCase()]?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [act, lastFix]);
+  }, [act, make, resize]);
 
-  const bad = useMemo(() => (img && labels ? misorderedFlies(labels, img.w, img.h) : []), [img, labels]);
-  const boxes = [
-    ...points.map(([x, y, pos]) => ({ x: x - 5, y: y - 5, w: 10, h: 10, text: pos ? '+' : '−' })),
+  if (!current) return <section><p>{status || 'Queue empty. Nice.'}</p></section>;
+  const [bx, by] = current.box;
+  const marks = [
+    ...points.map(([x, y, pos]) => ({ x: x - bx - 5, y: y - by - 5, w: 10, h: 10, text: pos ? '+' : '−' })),
     ...bad.map(({ x, y }) => ({ x: x - 12, y: y - 12, w: 24, h: 24, text: '✕ check order' })),
   ];
+  const clicked = tool === 'sam' ? points.length : polygon.length;
 
   return (
-    <section>
+    <section className="review">
       <p>
-        Approved <b>{counts.approved}</b> / {TARGET} · rejected {counts.rejected} · {queue.length} left
-        {current && <> · <small>{current.session}</small></>}
+        Photos done <b>{counts.approved}</b> / {TARGET} · rejected {counts.rejected} · {queue.length} flies left ·{' '}
+        this photo: fly <b>{current.fly + 1}</b> of {current.flies} · <small>{current.session}</small>
       </p>
+      <div className="controls">
+        <button onClick={() => act('approve')}>Approve fly (A)</button>
+        <button onClick={() => act('reject')}>Reject photo (R)</button>
+        <button onClick={() => act('flip')}>Backwards (X)</button>
+        <button onClick={() => act('skip')}>Skip (S)</button>
+        <button onClick={() => act('undo')}>Undo (Z)</button>
+        <button onClick={() => act('reset')}>Reset this fly</button>
+      </div>
+      <div className="controls">
+        <span>Tool (D):</span>
+        <button aria-pressed={tool === 'sam'} className={tool === 'sam' ? 'on' : ''} onClick={() => setTool('sam')}>SAM click</button>
+        <button aria-pressed={tool === 'draw'} className={tool === 'draw' ? 'on' : ''} onClick={() => setTool('draw')}>Draw outline</button>
+        <span>{tool === 'sam' ? `${points.length} spot(s) →` : `${polygon.length} corner(s) →`}</span>
+        {[1, 2, 3].map((k) => (
+          <button key={k} onClick={() => make(k)} disabled={tool === 'sam' ? !points.length : polygon.length < 3}
+            style={{ borderBottom: `3px solid rgb(${PART_COLORS[k].join(',')})` }}>Make {PART_NAMES[k]} ({k})</button>
+        ))}
+        {tool === 'draw' && <button onClick={() => make(0)} disabled={polygon.length < 3}>Erase (0)</button>}
+        {tool === 'sam' && <>
+          <button onClick={() => resize(-1)} disabled={!lastFix || lastFix.pick === 0}>Smaller (−)</button>
+          <button onClick={() => resize(1)} disabled={!lastFix || lastFix.pick === 2}>Bigger (+)</button>
+        </>}
+        <button onClick={() => { setPoints([]); setPolygon([]); }} disabled={!clicked}>Clear (Esc)</button>
+      </div>
       <p className="keys">
-        Looks right → <b>Approve</b>. Wrong part somewhere → click on that spot (shift-click = “not this”), then press
-        what it should be: <b>Make head / thorax / abdomen</b>. Messed it up → <b>Undo</b> (last step) or <b>Reset</b> (start over).
+        {tool === 'sam'
+          ? 'SAM click: click on the part (shift-click = “not this”), then Make head / thorax / abdomen. Wrong size? Smaller / Bigger.'
+          : 'Draw outline: click the corners of a shape around the region, then Make head / thorax / abdomen to fill it, or Erase to clear colour off legs and wings.'}
       </p>
-      {current && (
-        <div className="controls">
-          <button onClick={() => act('approve')}>Approve (A)</button>
-          <button onClick={() => act('reject')}>Reject (R)</button>
-          <button onClick={() => act('flip')}>Backwards (X)</button>
-          <button onClick={() => act('skip')}>Skip (S)</button>
-          <span>{points.length ? `${points.length} spot${points.length > 1 ? 's' : ''} clicked → make it:` : 'Click a spot to fix it'}</span>
-          {[1, 2, 3].map((k) => (
-            <button key={k} onClick={() => act('refine', k)} disabled={!points.length}
-              style={{ borderBottom: `3px solid rgb(${PART_COLORS[k].join(',')})` }}>
-              Make {PART_NAMES[k]} ({k})
-            </button>
-          ))}
-          <button onClick={() => lastFix && act('refine', lastFix.part, lastFix.pick - 1, lastFix.pts)} disabled={!lastFix || lastFix.pick === 0}
-            title="Make the last fix use SAM's next smaller outline">Smaller (−)</button>
-          <button onClick={() => lastFix && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts)} disabled={!lastFix || lastFix.pick === 2}
-            title="Make the last fix use SAM's next bigger outline">Bigger (+)</button>
-          <button onClick={() => setPoints([])} disabled={!points.length}>Clear clicks</button>
-          <button onClick={() => act('undo')}>Undo (Z)</button>
-          <button onClick={() => act('reset')}>Reset to SAM draft</button>
-        </div>
-      )}
       {status && <p className="error">{status}</p>}
-      {!current && !status && <p>Queue empty. Nice.</p>}
-      {img && labels && (
-        <Overlay img={img} labels={labels} color={color} boxes={boxes}
-          onClick={(x, y, e) => setPoints((p) => [...p, [x, y, e.shiftKey ? 0 : 1]])} />
+      {view && (
+        <Overlay img={view.img} labels={view.labels} color={color} boxes={marks}
+          polygon={polygon.map(([x, y]) => [x - bx, y - by] as [number, number])}
+          onClick={(x, y, e) => {
+            const px = x + bx, py = y + by; // crop → photo coordinates
+            if (tool === 'draw') setPolygon((p) => [...p, [px, py]]);
+            else setPoints((p) => [...p, [px, py, e.shiftKey ? 0 : 1]]);
+          }} />
       )}
     </section>
   );

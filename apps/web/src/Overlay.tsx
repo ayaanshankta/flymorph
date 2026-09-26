@@ -7,10 +7,11 @@ type Props = {
   labels?: ArrayLike<number>; // one label per image pixel; 0 = nothing
   color?: (label: number) => [number, number, number] | null;
   boxes?: Box[];
+  polygon?: [number, number][]; // drawn outline, closed back to its first corner
   onClick?: (x: number, y: number, e: React.MouseEvent) => void; // image-pixel coordinates
 };
 
-export function Overlay({ img, labels, color, boxes = [], onClick }: Props) {
+export function Overlay({ img, labels, color, boxes = [], polygon = [], onClick }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -33,7 +34,15 @@ export function Overlay({ img, labels, color, boxes = [], onClick }: Props) {
       ctx.strokeRect(b.x, b.y, b.w, b.h);
       ctx.fillText(b.text, b.x, Math.max(20, b.y - 8));
     }
-  }, [img, labels, color, boxes]);
+    if (polygon.length) {
+      ctx.strokeStyle = ctx.fillStyle = '#ffe14d';
+      ctx.beginPath();
+      polygon.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      if (polygon.length > 2) ctx.closePath();
+      ctx.stroke();
+      for (const [x, y] of polygon) ctx.fillRect(x - ctx.lineWidth * 1.5, y - ctx.lineWidth * 1.5, ctx.lineWidth * 3, ctx.lineWidth * 3);
+    }
+  }, [img, labels, color, boxes, polygon]);
 
   const click = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!onClick) return;

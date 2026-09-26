@@ -9,3 +9,6 @@ button { padding: 6px 14px; }
 nav { display: flex; gap: 18px; align-items: baseline; }
 nav a { color: #9cf; }
 .keys { color: #aaa; font-size: 14px; }
+.controls { margin-block: 6px; }
+button.on { background: #ffe14d; color: #111; font-weight: 600; }
+.review .overlay { max-height: 72vh; width: auto; }
