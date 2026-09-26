@@ -51,13 +51,13 @@ export function Review() {
     })();
   }, [current?.sha]);
 
-  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'skip') => {
+  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'skip') => {
     if (!current) return;
     if (kind === 'skip') { setQueue((q) => [...q.slice(1), q[0]]); return; }
     if (kind === 'refine' && !points.length) { setStatus('Click on the part first (shift-click = "not this").'); return; }
-    setStatus(kind === 'flip' || kind === 'refine' ? 'SAM is thinking…' : '');
+    setStatus(kind === 'approve' || kind === 'reject' ? '' : 'SAM is thinking…');
     await post(`/api/${kind}`, { sha: current.sha, part, points });
-    if (kind === 'flip' || kind === 'refine') { setLabels(await loadLabels(current.sha)); setPoints([]); setStatus(''); }
+    if (kind === 'flip' || kind === 'refine' || kind === 'reset') { setLabels(await loadLabels(current.sha)); setPoints([]); setStatus(''); }
     else refresh();
   }, [current, part, points, refresh]);
 
@@ -87,6 +87,24 @@ export function Review() {
         fix a part: <b>1</b> head <b>2</b> thorax <b>3</b> abdomen, click it (shift-click = not this), <b>F</b> apply ·{' '}
         editing: <span style={{ color: `rgb(${PART_COLORS[part].join(',')})` }}>{PART_NAMES[part]}</span>
       </p>
+      {current && (
+        <div className="controls">
+          <button onClick={() => act('approve')}>Approve (A)</button>
+          <button onClick={() => act('reject')}>Reject (R)</button>
+          <button onClick={() => act('flip')}>Backwards (X)</button>
+          <button onClick={() => act('skip')}>Skip (S)</button>
+          <span>Fix:</span>
+          {[1, 2, 3].map((k) => (
+            <button key={k} onClick={() => setPart(k)} aria-pressed={part === k}
+              style={part === k ? { outline: `3px solid rgb(${PART_COLORS[k].join(',')})` } : undefined}>
+              {PART_NAMES[k]} ({k})
+            </button>
+          ))}
+          <button onClick={() => act('refine')} disabled={!points.length}>Apply fix (F)</button>
+          <button onClick={() => setPoints([])} disabled={!points.length}>Clear clicks</button>
+          <button onClick={() => act('reset')}>Reset to SAM draft</button>
+        </div>
+      )}
       {status && <p className="error">{status}</p>}
       {!current && !status && <p>Queue empty. Nice.</p>}
       {img && labels && (

@@ -7,6 +7,7 @@
   POST /api/reject  {sha}    appended to ml/data/rejected.txt
   POST /api/refine  {sha, part, points: [[x, y, 1|0], ...]}   re-prompt SAM for one part
   POST /api/flip    {sha}    re-draft with every fly's head/abdomen ends swapped (toggles)
+  POST /api/reset   {sha}    re-draft from scratch, discarding manual fixes
 
 Binds to 127.0.0.1 only. usage: ml/.venv/bin/python ml/draft_server.py
 """
@@ -89,13 +90,31 @@ def refine():
     sha, part, pts = valid(body["sha"]), int(body["part"]), body["points"]
     if part not in (1, 2, 3) or not pts:
         return jsonify(error="need part 1-3 and at least one point"), 400
-    emb, inp = embedding(sha)
-    masks, scores = sam.masks(emb, inp, [[(p[0], p[1]) for p in pts]], [[int(p[2]) for p in pts]])
-    new = masks[0, int(np.argmax(scores[0]))]
     labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
+    # SAM's favourite answer to one click is often the whole fly. Tell it where the OTHER parts are
+    # (their centres as negative points), then prefer the tightest mask it is still confident about.
+    points = [(p[0], p[1]) for p in pts]
+    labs = [int(p[2]) for p in pts]
+    for other in {1, 2, 3} - {part}:
+        ys, xs = np.nonzero(labels == other)
+        if len(xs):
+            points.append((float(xs.mean()), float(ys.mean())))
+            labs.append(0)
+    emb, inp = embedding(sha)
+    masks, scores = sam.masks(emb, inp, [points], [labs])
+    ok = [j for j in range(3) if scores[0, j] >= 0.8 * scores[0].max()]
+    new = masks[0, min(ok, key=lambda j: masks[0, j].sum())]
     labels[labels == part] = 0
     labels[new] = part
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
+    return jsonify(ok=True)
+
+
+@app.post("/api/reset")
+def reset():
+    """Throw away manual fixes: re-draft this image from scratch (keeps the backwards toggle)."""
+    sha = valid(request.json["sha"])
+    cv2.imwrite(str(DRAFTS / f"{sha}.png"), draft(sam, cv2.imread(str(DATA / "img" / f"{sha}.jpg")), flip=sha in FLIPPED))
     return jsonify(ok=True)
 
 
