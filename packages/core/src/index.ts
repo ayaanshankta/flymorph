@@ -9,3 +9,4 @@ export * from './fft';
 export * from './calibrate';
 export * from './csv';
 export * from './adult';
+export * from './anatomy';

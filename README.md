@@ -15,7 +15,7 @@ Measure *Drosophila* larvae and adult flies in mm² from stereo-microscope photo
 ```bash
 npm install
 npm run dev                 # web app → http://localhost:5173
-npm test                    # 36 unit tests on the core
+npm test                    # 40 unit tests on the core
 
 # batch a whole imaging session to CSV
 npx tsx apps/cli/src/main.ts larva "path/to/session" --scale "path/to/session/scale.jpg" --out larvae.csv

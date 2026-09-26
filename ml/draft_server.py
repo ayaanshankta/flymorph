@@ -5,7 +5,8 @@
   GET  /draft/<sha>          current draft label PNG (0 bg, 1 head, 2 thorax, 3 abdomen)
   POST /api/approve {sha}    draft → ml/data/masks/<sha>.png   (this is what becomes ground truth)
   POST /api/reject  {sha}    appended to ml/data/rejected.txt
-  POST /api/refine  {sha, part, points: [[x, y, 1|0], ...]}   re-prompt SAM for one part
+  POST /api/refine  {sha, part, points: [[x, y, 1|0], ...], pick}   re-prompt SAM for one part;
+                     pick 0/1/2 = SAM's smallest/middle/largest of its three candidate outlines
   POST /api/flip    {sha}    re-draft with every fly's head/abdomen ends swapped (toggles)
   POST /api/reset   {sha}    re-draft from scratch, discarding manual fixes
 
@@ -92,7 +93,8 @@ def refine():
         return jsonify(error="need part 1-3 and at least one point"), 400
     labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
     # SAM's favourite answer to one click is often the whole fly. Tell it where the OTHER parts are
-    # (their centres as negative points), then prefer the tightest mask it is still confident about.
+    # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly);
+    # the reviewer steps through them with Smaller / Bigger.
     points = [(p[0], p[1]) for p in pts]
     labs = [int(p[2]) for p in pts]
     for other in {1, 2, 3} - {part}:
@@ -102,8 +104,8 @@ def refine():
             labs.append(0)
     emb, inp = embedding(sha)
     masks, scores = sam.masks(emb, inp, [points], [labs])
-    ok = [j for j in range(3) if scores[0, j] >= 0.8 * scores[0].max()]
-    new = masks[0, min(ok, key=lambda j: masks[0, j].sum())]
+    by_size = sorted(range(3), key=lambda j: masks[0, j].sum())
+    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]]
     labels[labels == part] = 0
     labels[new] = part
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)

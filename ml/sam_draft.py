@@ -94,25 +94,42 @@ def axis_points(bgr: np.ndarray, blob: np.ndarray, flip: bool = False) -> dict[i
     return {k: tuple(c + u * (start + f * (end - start))) for k, (_, f, _) in PARTS.items()}
 
 
+def thorax_between(parts: dict[int, np.ndarray]) -> bool:
+    """A fly's thorax sits between head and abdomen: seen from the thorax centre they point in opposite
+    directions (negative dot product). Same rule as packages/core/src/anatomy.ts."""
+    if any(not parts[k].any() for k in (1, 2, 3)):
+        return True  # can't judge a fly with a missing part
+    h, t, a = (np.array(np.nonzero(parts[k])[::-1]).mean(1) for k in (1, 2, 3))
+    return float(np.dot(h - t, a - t)) < 0
+
+
+def fly_parts(sam: Sam, emb, inp, bgr: np.ndarray, blob: np.ndarray, flip: bool) -> dict[int, np.ndarray]:
+    pts = axis_points(bgr, blob, flip)
+    order = list(PARTS)
+    prompts = [[pts[k]] + [pts[o] for o in order if o != k] for k in order]
+    masks, scores = sam.masks(emb, inp, prompts, [[1, 0, 0] for _ in order])
+    region = cv2.dilate(blob.astype(np.uint8), np.ones((31, 31), np.uint8)).astype(bool)
+    body_area = blob.sum()
+    chosen = {}
+    for i, k in enumerate(order):
+        share = PARTS[k][2]
+        ok = [j for j in range(3) if scores[i, j] >= 0.7 * scores[i].max()]
+        j = min(ok, key=lambda j: abs(np.log(((masks[i, j] & region).sum() + 1) / (share * body_area))))
+        chosen[k] = masks[i, j] & region
+    return chosen
+
+
 def draft(sam: Sam, bgr: np.ndarray, flip: bool = False) -> np.ndarray:
     """Label map (0 bg, 1 head, 2 thorax, 3 abdomen) for every fly in the image."""
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     emb, inp = sam.embed(rgb)
     out = np.zeros(bgr.shape[:2], np.uint8)
     for blob in fly_blobs(bgr):
-        pts = axis_points(bgr, blob, flip)
-        order = list(PARTS)
-        prompts = [[pts[k]] + [pts[o] for o in order if o != k] for k in order]
-        labels = [[1, 0, 0] for _ in order]
-        masks, scores = sam.masks(emb, inp, prompts, labels)
-        region = cv2.dilate(blob.astype(np.uint8), np.ones((31, 31), np.uint8)).astype(bool)
-        body_area = blob.sum()
-        chosen = {}
-        for i, k in enumerate(order):
-            share = PARTS[k][2]
-            ok = [j for j in range(3) if scores[i, j] >= 0.7 * scores[i].max()]
-            j = min(ok, key=lambda j: abs(np.log(((masks[i, j] & region).sum() + 1) / (share * body_area))))
-            chosen[k] = masks[i, j] & region
+        chosen = fly_parts(sam, emb, inp, bgr, blob, flip)
+        if not thorax_between(chosen):  # head/abdomen on the same side → the head end was probably guessed wrong
+            other = fly_parts(sam, emb, inp, bgr, blob, not flip)
+            if thorax_between(other):
+                chosen = other
         for k in sorted(chosen, key=lambda k: -chosen[k].sum()):  # paint big first, so smaller parts win overlaps
             out[chosen[k]] = k
     return out

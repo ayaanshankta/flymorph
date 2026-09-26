@@ -1,7 +1,7 @@
 // #/review — approve, reject or fix SAM's draft masks. Talks to ml/draft_server.py on localhost:5055.
 // Only masks approved here become training data, so this page is where ground truth is made.
-import { useCallback, useEffect, useState } from 'react';
-import type { RGB } from '@flymorph/core';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { misorderedFlies, type RGB } from '@flymorph/core';
 import { decode } from './decode';
 import { Overlay } from './Overlay';
 
@@ -27,9 +27,10 @@ export function Review() {
   const [counts, setCounts] = useState({ approved: 0, rejected: 0 });
   const [img, setImg] = useState<RGB | null>(null);
   const [labels, setLabels] = useState<Uint8Array | null>(null);
-  const [part, setPart] = useState(1);
   const [points, setPoints] = useState<Point[]>([]);
   const [status, setStatus] = useState('');
+  const [confirmBad, setConfirmBad] = useState(false); // approving a fly that fails the anatomy check needs 2 presses
+  const [lastFix, setLastFix] = useState<{ part: number; pick: number } | null>(null); // for Smaller / Bigger
   const current = queue[0];
 
   const refresh = useCallback(async () => {
@@ -44,29 +45,39 @@ export function Review() {
 
   useEffect(() => {
     if (!current) return;
-    setImg(null); setLabels(null); setPoints([]);
+    setImg(null); setLabels(null); setPoints([]); setLastFix(null); setConfirmBad(false);
     (async () => {
       setImg(await decode(await (await fetch(`${API}/img/${current.sha}`)).blob()));
       setLabels(await loadLabels(current.sha));
     })();
   }, [current?.sha]);
 
-  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'skip') => {
+  // part is only used by 'refine': the fix names its part at the moment it is applied (no hidden mode).
+  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'skip', part = 0, pick = 0) => {
     if (!current) return;
     if (kind === 'skip') { setQueue((q) => [...q.slice(1), q[0]]); return; }
-    if (kind === 'refine' && !points.length) { setStatus('Click on the part first (shift-click = "not this").'); return; }
+    if (kind === 'approve' && img && labels && misorderedFlies(labels, img.w, img.h).length && !confirmBad) {
+      setConfirmBad(true);
+      setStatus('A fly here has its head and abdomen on the same side of the thorax (marked ✕), so a part is probably mislabelled. Fix it, or press Approve again to approve anyway.');
+      return;
+    }
+    if (kind === 'refine' && !points.length) { setStatus('First click the spots on the fly, then choose what they are.'); return; }
     setStatus(kind === 'approve' || kind === 'reject' ? '' : 'SAM is thinking…');
-    await post(`/api/${kind}`, { sha: current.sha, part, points });
-    if (kind === 'flip' || kind === 'refine' || kind === 'reset') { setLabels(await loadLabels(current.sha)); setPoints([]); setStatus(''); }
+    await post(`/api/${kind}`, { sha: current.sha, part, points, pick });
+    if (kind === 'flip' || kind === 'refine' || kind === 'reset') {
+      setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
+      // keep the clicks after a fix so Smaller / Bigger can re-ask SAM with the same spots
+      if (kind === 'refine') setLastFix({ part, pick }); else { setPoints([]); setLastFix(null); }
+    }
     else refresh();
-  }, [current, part, points, refresh]);
+  }, [current, points, refresh, img, labels, confirmBad]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       const map: Record<string, () => void> = {
-        a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), f: () => act('refine'), s: () => act('skip'),
-        '1': () => setPart(1), '2': () => setPart(2), '3': () => setPart(3), escape: () => setPoints([]),
+        a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'),
+        '1': () => act('refine', 1), '2': () => act('refine', 2), '3': () => act('refine', 3), escape: () => setPoints([]),
       };
       map[k]?.();
     };
@@ -74,7 +85,11 @@ export function Review() {
     return () => window.removeEventListener('keydown', onKey);
   }, [act]);
 
-  const boxes = points.map(([x, y, pos]) => ({ x: x - 5, y: y - 5, w: 10, h: 10, text: pos ? '+' : '−' }));
+  const bad = useMemo(() => (img && labels ? misorderedFlies(labels, img.w, img.h) : []), [img, labels]);
+  const boxes = [
+    ...points.map(([x, y, pos]) => ({ x: x - 5, y: y - 5, w: 10, h: 10, text: pos ? '+' : '−' })),
+    ...bad.map(({ x, y }) => ({ x: x - 12, y: y - 12, w: 24, h: 24, text: '✕ check order' })),
+  ];
 
   return (
     <section>
@@ -83,9 +98,8 @@ export function Review() {
         {current && <> · <small>{current.session}</small></>}
       </p>
       <p className="keys">
-        <b>A</b> approve · <b>R</b> reject · <b>X</b> fly is backwards · <b>S</b> skip ·{' '}
-        fix a part: <b>1</b> head <b>2</b> thorax <b>3</b> abdomen, click it (shift-click = not this), <b>F</b> apply ·{' '}
-        editing: <span style={{ color: `rgb(${PART_COLORS[part].join(',')})` }}>{PART_NAMES[part]}</span>
+        Looks right → <b>Approve</b>. Wrong part somewhere → click on that spot (shift-click = “not this”), then press
+        what it should be: <b>Make head / thorax / abdomen</b>. Messed it up → <b>Reset</b>.
       </p>
       {current && (
         <div className="controls">
@@ -93,15 +107,18 @@ export function Review() {
           <button onClick={() => act('reject')}>Reject (R)</button>
           <button onClick={() => act('flip')}>Backwards (X)</button>
           <button onClick={() => act('skip')}>Skip (S)</button>
-          <span>Fix:</span>
+          <span>{points.length ? `${points.length} spot${points.length > 1 ? 's' : ''} clicked → make it:` : 'Click a spot to fix it'}</span>
           {[1, 2, 3].map((k) => (
-            <button key={k} onClick={() => setPart(k)} aria-pressed={part === k}
-              style={part === k ? { outline: `3px solid rgb(${PART_COLORS[k].join(',')})` } : undefined}>
-              {PART_NAMES[k]} ({k})
+            <button key={k} onClick={() => act('refine', k)} disabled={!points.length}
+              style={{ borderBottom: `3px solid rgb(${PART_COLORS[k].join(',')})` }}>
+              Make {PART_NAMES[k]} ({k})
             </button>
           ))}
-          <button onClick={() => act('refine')} disabled={!points.length}>Apply fix (F)</button>
-          <button onClick={() => setPoints([])} disabled={!points.length}>Clear clicks</button>
+          {lastFix && <>
+            <button onClick={() => act('refine', lastFix.part, lastFix.pick - 1)} disabled={lastFix.pick === 0}>Smaller</button>
+            <button onClick={() => act('refine', lastFix.part, lastFix.pick + 1)} disabled={lastFix.pick === 2}>Bigger</button>
+          </>}
+          <button onClick={() => { setPoints([]); setLastFix(null); }} disabled={!points.length}>Clear clicks</button>
           <button onClick={() => act('reset')}>Reset to SAM draft</button>
         </div>
       )}
@@ -109,7 +126,7 @@ export function Review() {
       {!current && !status && <p>Queue empty. Nice.</p>}
       {img && labels && (
         <Overlay img={img} labels={labels} color={color} boxes={boxes}
-          onClick={(x, y, e) => setPoints((p) => [...p, [x, y, e.shiftKey ? 0 : 1]])} />
+          onClick={(x, y, e) => { setLastFix(null); setPoints((p) => [...p, [x, y, e.shiftKey ? 0 : 1]]); }} />
       )}
     </section>
   );

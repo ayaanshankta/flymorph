@@ -1,6 +1,7 @@
 import { type RGB, resizeBilinear, gray } from './image';
 import { components } from './ccl';
 import { open } from './morph';
+import { misorderedFlies } from './anatomy';
 import type { Calibration, Measurement } from './larva';
 
 // Contract with the ONNX model (ml/export.py):
@@ -49,6 +50,7 @@ export function postprocess(probs: Float32Array, T: number, box: Letterbox, cal:
   // Flies = connected blobs of "some pass thought this was fly" (so every pass is counted in the same region).
   const { labels: inst, comps } = components(open(anyFly, 2));
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
+  const misordered = misorderedFlies(labels, S, S); // thorax not between head and abdomen → suspect
   comps.filter((c) => c.area > 0.002 * N).forEach((c, f) => {
     const counts = Array.from({ length: T }, () => [0, 0, 0, 0]);
     for (let y = c.y; y < c.y + c.h; y++)
@@ -56,13 +58,15 @@ export function postprocess(probs: Float32Array, T: number, box: Letterbox, cal:
         const i = y * S + x;
         if (inst[i] === c.id) for (let t = 0; t < T; t++) counts[t][perPass[t * N + i]]++;
       }
+    const anatomy = misordered.some((p) => p.x >= c.x && p.x < c.x + c.w && p.y >= c.y && p.y < c.y + c.h);
     const bbox: Measurement['bbox'] = [(c.x - box.padX) / box.scale, (c.y - box.padY) / box.scale, c.w / box.scale, c.h / box.scale];
     const series = [1, 2, 3].map((k) => counts.map((n) => n[k])).concat([counts.map((n) => n[1] + n[2] + n[3])]);
     (['head', 'thorax', 'abdomen', 'body'] as const).forEach((part, k) => {
       const mean = series[k].reduce((a, b) => a + b, 0) / T;
       if (!mean) return;
       const sd = Math.sqrt(series[k].reduce((a, b) => a + (b - mean) ** 2, 0) / T);
-      const flags = [c.edge && 'edge', part === 'body' && sd / mean > 0.1 && 'uncertain'].filter(Boolean);
+      const flags = [c.edge && 'edge', part === 'body' && sd / mean > 0.1 && 'uncertain', part === 'body' && anatomy && 'anatomy?']
+        .filter(Boolean);
       out.push({ id: f + 1, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
         bbox, ...(flags.length ? { flag: flags.join(',') } : {}) });
     });

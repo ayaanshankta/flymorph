@@ -139,7 +139,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outli
     <div><b>767</b><span>adult photos indexed, 44 duplicates dropped</span></div>
     <div><b>63 / 75</b><span>scale images calibrated automatically</span></div>
     <div><b>1.66 M</b><span>model parameters (SAM has ~90 M)</span></div>
-    <div><b>36</b><span>unit tests on the TypeScript core</span></div>
+    <div><b>40</b><span>unit tests on the TypeScript core</span></div>
   </div>
   <h3>How to use this course</h3>
   <ol>
@@ -567,6 +567,7 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     <li><b>Foundation model as teacher.</b> Segment Anything (SAM) outlines almost anything you point at, but it is ~375 MB and needs prompts. We generate the prompts automatically.</li>
     <li><b>Automatic prompts.</b> Find each fly by colour saturation, get its long axis from pixel moments, and find the head end from the eye (redder than that fly’s own body). Then place points at 8% / 35% / 72% along the axis. Each part’s point is positive and the other two are negative, so SAM splits the parts.</li>
     <li><b>Human in the loop.</b> The review page shows each draft. <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>X</kbd> fly is backwards, or click and press <kbd>F</kbd> to re-prompt one part. Only approved masks are ground truth.</li>
+    <li><b>Anatomy as a free check (Ayaan’s idea).</b> The thorax always sits between the head and the abdomen, so from the thorax’s centre they point in opposite directions (negative dot product). The drafter retries a fly that breaks this, and the review page won’t approve one without a second press.</li>
     <li><b>Sessions.</b> A session is the nearest folder holding a scale image, because everything calibrated together was photographed together. Top and side views of the same flies are one session.</li>
   </ul>
   <figure class="code"><figcaption>ml/sam_draft.py · axis_points</figcaption><pre><code class="language-python">def axis_points(bgr: np.ndarray, blob: np.ndarray, flip: bool = False) -&gt; dict[int, tuple[float, float]]:
@@ -598,10 +599,21 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     sha, part, pts = valid(body["sha"]), int(body["part"]), body["points"]
     if part not in (1, 2, 3) or not pts:
         return jsonify(error="need part 1-3 and at least one point"), 400
-    emb, inp = embedding(sha)
-    masks, scores = sam.masks(emb, inp, [[(p[0], p[1]) for p in pts]], [[int(p[2]) for p in pts]])
-    new = masks[0, int(np.argmax(scores[0]))]
     labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
+    # SAM's favourite answer to one click is often the whole fly. Tell it where the OTHER parts are
+    # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly);
+    # the reviewer steps through them with Smaller / Bigger.
+    points = [(p[0], p[1]) for p in pts]
+    labs = [int(p[2]) for p in pts]
+    for other in {1, 2, 3} - {part}:
+        ys, xs = np.nonzero(labels == other)
+        if len(xs):
+            points.append((float(xs.mean()), float(ys.mean())))
+            labs.append(0)
+    emb, inp = embedding(sha)
+    masks, scores = sam.masks(emb, inp, [points], [labs])
+    by_size = sorted(range(3), key=lambda j: masks[0, j].sum())
+    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]]
     labels[labels == part] = 0
     labels[new] = part
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
@@ -684,8 +696,34 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
   <ul>
     <li><b>ONNX Runtime Web</b> tries WebGPU first and falls back to WebAssembly. The CLI loads the same file with <code>onnxruntime-node</code>.</li>
     <li><b>Monte Carlo dropout.</b> Run 8 passes, each with a random 20% of bottleneck channels switched off. Where the passes agree, the model is confident. The spread of the 8 areas is the ± you report.</li>
+    <li><b>Anatomy flag.</b> A predicted fly whose head and abdomen sit on the same side of the thorax is flagged <code>anatomy?</code>, using the same rule as the review page.</li>
     <li><b>Letterboxing.</b> The model sees a 512×512 square. <code>preprocess</code> shrinks and pads, and every area is scaled back by 1/scale² into original pixels, then into mm².</li>
   </ul>
+  <figure class="code"><figcaption>packages/core/src/anatomy.ts · misorderedFlies</figcaption><pre><code class="language-typescript">// A fly's thorax sits BETWEEN its head and abdomen, so seen from the thorax's centre the head and the
+// abdomen point in opposite directions: the angle between them is over 90°, i.e. their dot product is
+// negative. A label map where both point the same way is almost certainly wrong (e.g. a head painted as
+// abdomen). Returns the thorax centre of every fly that breaks the rule; flies missing a part are skipped.
+export function misorderedFlies(labels: ArrayLike&lt;number&gt;, w: number, h: number): { x: number; y: number }[] {
+  const fly = gray(w, h);
+  for (let i = 0; i &lt; w * h; i++) fly.data[i] = labels[i] ? 1 : 0;
+  const { labels: inst, comps } = components(fly);
+  const bad: { x: number; y: number }[] = [];
+  for (const c of comps) {
+    const sum = [[0, 0], [0, 0], [0, 0], [0, 0]], n = [0, 0, 0, 0]; // per label: Σx, Σy, count
+    for (let y = c.y; y &lt; c.y + c.h; y++)
+      for (let x = c.x; x &lt; c.x + c.w; x++) {
+        const i = y * w + x, k = labels[i];
+        if (inst[i] !== c.id || !k) continue;
+        sum[k][0] += x; sum[k][1] += y; n[k]++;
+      }
+    if (!n[1] || !n[2] || !n[3]) continue;
+    const [hx, hy] = [sum[1][0] / n[1], sum[1][1] / n[1]];
+    const [tx, ty] = [sum[2][0] / n[2], sum[2][1] / n[2]];
+    const [ax, ay] = [sum[3][0] / n[3], sum[3][1] / n[3]];
+    if ((hx - tx) * (ax - tx) + (hy - ty) * (ay - ty) &gt;= 0) bad.push({ x: tx, y: ty });
+  }
+  return bad;
+}</code></pre></figure>
   <figure class="code"><figcaption>packages/core/src/adult.ts · dropMasks</figcaption><pre><code class="language-typescript">// Monte Carlo dropout: each pass switches off a random 20% of the bottleneck channels (and scales the rest
 // up so the average is unchanged). The spread of answers across passes is the model's uncertainty.
 export function dropMasks(T: number, p = 0.2, rand = Math.random) {
@@ -711,6 +749,7 @@ export function dropMasks(T: number, p = 0.2, rand = Math.random) {
   // Flies = connected blobs of "some pass thought this was fly" (so every pass is counted in the same region).
   const { labels: inst, comps } = components(open(anyFly, 2));
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
+  const misordered = misorderedFlies(labels, S, S); // thorax not between head and abdomen → suspect
   comps.filter((c) =&gt; c.area &gt; 0.002 * N).forEach((c, f) =&gt; {
     const counts = Array.from({ length: T }, () =&gt; [0, 0, 0, 0]);
     for (let y = c.y; y &lt; c.y + c.h; y++)
@@ -718,13 +757,15 @@ export function dropMasks(T: number, p = 0.2, rand = Math.random) {
         const i = y * S + x;
         if (inst[i] === c.id) for (let t = 0; t &lt; T; t++) counts[t][perPass[t * N + i]]++;
       }
+    const anatomy = misordered.some((p) =&gt; p.x &gt;= c.x &amp;&amp; p.x &lt; c.x + c.w &amp;&amp; p.y &gt;= c.y &amp;&amp; p.y &lt; c.y + c.h);
     const bbox: Measurement['bbox'] = [(c.x - box.padX) / box.scale, (c.y - box.padY) / box.scale, c.w / box.scale, c.h / box.scale];
     const series = [1, 2, 3].map((k) =&gt; counts.map((n) =&gt; n[k])).concat([counts.map((n) =&gt; n[1] + n[2] + n[3])]);
     (['head', 'thorax', 'abdomen', 'body'] as const).forEach((part, k) =&gt; {
       const mean = series[k].reduce((a, b) =&gt; a + b, 0) / T;
       if (!mean) return;
       const sd = Math.sqrt(series[k].reduce((a, b) =&gt; a + (b - mean) ** 2, 0) / T);
-      const flags = [c.edge &amp;&amp; 'edge', part === 'body' &amp;&amp; sd / mean &gt; 0.1 &amp;&amp; 'uncertain'].filter(Boolean);
+      const flags = [c.edge &amp;&amp; 'edge', part === 'body' &amp;&amp; sd / mean &gt; 0.1 &amp;&amp; 'uncertain', part === 'body' &amp;&amp; anatomy &amp;&amp; 'anatomy?']
+        .filter(Boolean);
       out.push({ id: f + 1, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
         bbox, ...(flags.length ? { flag: flags.join(',') } : {}) });
     });
