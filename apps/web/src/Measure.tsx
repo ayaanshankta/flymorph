@@ -158,7 +158,6 @@ export function Measure({ mode }: { mode: Mode }) {
         </div>
         <div className="actions">
           <button className="primary" disabled={!!busy} onClick={() => run(photos, scale)}>Measure</button>
-          <button className="link" disabled={!!busy} onClick={example}>or load an example</button>
         </div>
       </div>
 
@@ -174,8 +173,13 @@ export function Measure({ mode }: { mode: Mode }) {
 
       {!results.length && !busy && !error && (
         <div className="empty">
-          <p>Choose one or more {c.things === 'larvae' ? 'larva' : 'fly'} photos and the stage-micrometer photo taken at the same zoom, then press Measure.</p>
-          <p>Results appear here as a table you can copy into Excel or Sheets.</p>
+          <img src={`examples/${mode}.jpg`} alt="" />
+          <div>
+            <p className="empty-title">No photos measured yet</p>
+            <p>Choose {c.things === 'larvae' ? 'larva' : 'fly'} photos and the stage-micrometer photo taken at the same zoom, then
+              press Measure. Results come out as a table you can paste into Excel or Sheets.</p>
+            <button onClick={example}>Try it on this example photo</button>
+          </div>
         </div>
       )}
 

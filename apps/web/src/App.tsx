@@ -43,6 +43,11 @@ export function App() {
         <div key={t.hash} hidden={t !== tab}><Measure mode={t.mode} /></div>
       ))}
 
+      <footer className="foot">
+        Photos are measured on your own computer and never uploaded.{' '}
+        <a href="https://github.com/ayaanshankta/flymorph">Source on GitHub</a>
+      </footer>
+
     </main>
   );
 }
