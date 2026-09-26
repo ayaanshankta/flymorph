@@ -15,7 +15,7 @@ Measure *Drosophila* larvae and adult flies in mm² from stereo-microscope photo
 ```bash
 npm install
 npm run dev                 # web app → http://localhost:5173
-npm test                    # 46 unit tests on the core
+npm test                    # 47 unit tests on the core
 
 # batch a whole imaging session to CSV
 npx tsx apps/cli/src/main.ts larva "path/to/session" --scale "path/to/session/scale.jpg" --out larvae.csv
@@ -43,16 +43,19 @@ The ML loop:
 
 ## Results
 
-The shipped model (v0) was trained on **unreviewed SAM drafts** to prove the pipeline end to end, so these are not accuracy claims. Scored against drafts on 24 images from 6 held-out sessions (`ml/results/v0-drafts-metrics.json`):
+FlyNet v1, trained on 63 human-approved photos and scored against human-approved masks on 17 photos from 6 imaging sessions it never saw (`ml/results/v1-masks-metrics.json`):
 
 | Part | Dice | Median area error | Inside ±2 SD |
 |---|---:|---:|---:|
-| head | 0.54 | 47% | 18% |
-| thorax | 0.63 | 27% | 24% |
-| abdomen | 0.57 | 51% | 17% |
-| body | 0.81 | 21% | 19% |
+| head | 0.83 | 16% | 5% |
+| thorax | 0.80 | 21% | 19% |
+| abdomen | 0.89 | 6% | 36% |
+| body | 0.90 | 12% | 19% |
 
-Two things to fix before trusting it: part boundaries need reviewed labels, and the error bars are over-confident (±2 SD should hold ~95% of true areas, not ~20%). Retrain with `ml/train.py --labels masks` after approving ≥ 60 masks in `#/review`.
+- Reviewing labels mattered: the same model trained on unreviewed SAM drafts reached 0.58–0.69 validation Dice; on reviewed masks, 0.83–0.90.
+- Repeatability: seven repeat photos of the same two flies give body areas of 1.90–1.99 mm² and 2.26–2.42 mm² (about ±3%).
+- The error bars are still over-confident: ±2 SD should contain ~95% of true areas, and it contains 5–36%. Calibrating the SD on the validation set is the next step.
+- Body-plan rules (thorax between head and abdomen, no gaps, head smallest, no part split in two) raise 0 false alarms on the 94 approved photos and flag 12 of 60 unapproved drafts.
 
 Larva pipeline, checked on real images:
 - The old fixed threshold (V > 95) cut into translucent larvae; Otsu follows the true edge (+7–15% area on the same image).

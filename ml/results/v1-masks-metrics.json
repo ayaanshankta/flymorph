@@ -1,0 +1,32 @@
+{
+ "labels": "masks",
+ "ground_truth": true,
+ "test_images": 17,
+ "test_sessions": 6,
+ "parts": {
+  "head": {
+   "dice": 0.8339,
+   "median_area_err_pct": 16.34,
+   "coverage_2sd": 0.045,
+   "flies": 22
+  },
+  "thorax": {
+   "dice": 0.8016,
+   "median_area_err_pct": 21.07,
+   "coverage_2sd": 0.188,
+   "flies": 32
+  },
+  "abdomen": {
+   "dice": 0.889,
+   "median_area_err_pct": 6.29,
+   "coverage_2sd": 0.364,
+   "flies": 22
+  },
+  "body": {
+   "dice": 0.8951,
+   "median_area_err_pct": 12.05,
+   "coverage_2sd": 0.19,
+   "flies": 42
+  }
+ }
+}

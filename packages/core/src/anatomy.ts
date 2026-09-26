@@ -11,14 +11,18 @@ import { gray } from './image';
 export type Issue = 'order' | 'gap' | 'sizes' | 'pieces';
 export type FlyIssues = { x: number; y: number; issues: Issue[] }; // x, y = thorax centre
 
-// Parts closer than groupRadius·2 count as one fly, so a fly with a gap is still judged as one fly.
+// Which pixels form one fly: either a radius (mask pieces closer than 2·radius count as one fly, so a fly
+// with a gap is still judged as one) or a ready-made map of fly ids (0 = not a fly), e.g. from postprocess.
 export function anatomyIssues(labels: ArrayLike<number>, w: number, h: number,
-  groupRadius = Math.max(1, Math.round(0.08 * Math.max(w, h)))): FlyIssues[] {
-  const any = gray(w, h);
-  for (let i = 0; i < w * h; i++) any.data[i] = labels[i] ? 1 : 0;
-  const { labels: group, comps } = components(dilate(any, groupRadius));
+  grouping: number | Int32Array = Math.max(1, Math.round(0.08 * Math.max(w, h)))): FlyIssues[] {
+  let group: Int32Array;
+  if (typeof grouping === 'number') {
+    const any = gray(w, h);
+    for (let i = 0; i < w * h; i++) any.data[i] = labels[i] ? 1 : 0;
+    group = components(dilate(any, grouping)).labels;
+  } else group = grouping;
   const out: FlyIssues[] = [];
-  for (const c of comps) {
+  for (const c of boxesOf(group, w)) {
     const n = [0, 0, 0, 0], sx = [0, 0, 0, 0], sy = [0, 0, 0, 0];
     const part = (k: number) => {
       const m = gray(c.w, c.h);
@@ -44,6 +48,18 @@ export function anatomyIssues(labels: ArrayLike<number>, w: number, h: number,
     if (issues.length) out.push({ x: tx + c.x, y: ty + c.y, issues });
   }
   return out;
+}
+
+function boxesOf(group: Int32Array, w: number) {
+  const b = new Map<number, { id: number; x: number; y: number; w: number; h: number; x1: number; y1: number }>();
+  for (let i = 0; i < group.length; i++) {
+    const id = group[i];
+    if (!id) continue;
+    const x = i % w, y = (i - x) / w, c = b.get(id);
+    if (!c) b.set(id, { id, x, y, w: 1, h: 1, x1: x, y1: y });
+    else { c.x = Math.min(c.x, x); c.y = Math.min(c.y, y); c.x1 = Math.max(c.x1, x); c.y1 = Math.max(c.y1, y); }
+  }
+  return [...b.values()].map((c) => ({ ...c, w: c.x1 - c.x + 1, h: c.y1 - c.y + 1 }));
 }
 
 // Flies whose thorax is not between head and abdomen (kept for callers that only need the order rule).

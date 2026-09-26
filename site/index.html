@@ -138,8 +138,8 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outli
   <div class="facts">
     <div><b>767</b><span>adult photos indexed, 44 duplicates dropped</span></div>
     <div><b>63 / 75</b><span>scale images calibrated automatically</span></div>
-    <div><b>1.66 M</b><span>model parameters (SAM has ~90 M)</span></div>
-    <div><b>46</b><span>unit tests on the TypeScript core</span></div>
+    <div><b>0.90</b><span>body Dice on flies from unseen sessions</span></div>
+    <div><b>47</b><span>unit tests on the TypeScript core</span></div>
   </div>
   <h3>How to use this course</h3>
   <ol>
@@ -685,8 +685,8 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     inter, total = (p * t).sum((0, 2, 3)), (p + t).sum((0, 2, 3))
     return 1 - ((2 * inter + 1) / (total + 1)).mean()</code></pre></figure>
   <h3>Current numbers</h3>
-  <p class="warn"><b>Draft labels.</b> This model was trained and scored on SAM’s unreviewed drafts. These numbers prove the pipeline runs end to end; they are not accuracy. They will be replaced when the model is retrained on reviewed masks.</p><div class="scroll"><table class="num"><thead><tr><th>Part</th><th>Dice</th><th>Median area error</th><th>Inside ±2 SD</th><th>Flies</th></tr></thead><tbody><tr><td>head</td><td>0.532</td><td>43.78%</td><td>0.128</td><td>39</td></tr><tr><td>thorax</td><td>0.631</td><td>26.93%</td><td>0.214</td><td>42</td></tr><tr><td>abdomen</td><td>0.572</td><td>50.34%</td><td>0.208</td><td>48</td></tr><tr><td>body</td><td>0.812</td><td>20.47%</td><td>0.145</td><td>69</td></tr></tbody></table></div>
-<p class="caption">Run <code>20260926-135929</code> · 24 test images from 6 sessions the model never saw · labels: drafts</p>
+  <div class="scroll"><table class="num"><thead><tr><th>Part</th><th>Dice</th><th>Median area error</th><th>Inside ±2 SD</th><th>Flies</th></tr></thead><tbody><tr><td>head</td><td>0.834</td><td>16.34%</td><td>0.045</td><td>22</td></tr><tr><td>thorax</td><td>0.802</td><td>21.07%</td><td>0.188</td><td>32</td></tr><tr><td>abdomen</td><td>0.889</td><td>6.29%</td><td>0.364</td><td>22</td></tr><tr><td>body</td><td>0.895</td><td>12.05%</td><td>0.19</td><td>42</td></tr></tbody></table></div>
+<p class="caption">Run <code>20260926-153512</code> · 17 test images from 6 sessions the model never saw · labels: masks</p>
   <div class="box"><h3>Try it yourself</h3><p>Train once with a random split instead of a session split, and compare the test scores. The gap between them is how much a leaky split would have lied to you.</p></div>
 </section>
 
@@ -699,14 +699,18 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     <li><b>Body-plan flags.</b> Each predicted fly is checked with the same rules as the review page and flagged <code>order?</code>, <code>gap?</code>, <code>sizes?</code> or <code>pieces?</code>. Mask pieces within 12 px are grouped, so a fly with a gap is still measured as one fly.</li>
     <li><b>Letterboxing.</b> The model sees a 512×512 square. <code>preprocess</code> shrinks and pads, and every area is scaled back by 1/scale² into original pixels, then into mm².</li>
   </ul>
-  <figure class="code"><figcaption>packages/core/src/anatomy.ts · anatomyIssues</figcaption><pre><code class="language-typescript">// Parts closer than groupRadius·2 count as one fly, so a fly with a gap is still judged as one fly.
+  <figure class="code"><figcaption>packages/core/src/anatomy.ts · anatomyIssues</figcaption><pre><code class="language-typescript">// Which pixels form one fly: either a radius (mask pieces closer than 2·radius count as one fly, so a fly
+// with a gap is still judged as one) or a ready-made map of fly ids (0 = not a fly), e.g. from postprocess.
 export function anatomyIssues(labels: ArrayLike&lt;number&gt;, w: number, h: number,
-  groupRadius = Math.max(1, Math.round(0.08 * Math.max(w, h)))): FlyIssues[] {
-  const any = gray(w, h);
-  for (let i = 0; i &lt; w * h; i++) any.data[i] = labels[i] ? 1 : 0;
-  const { labels: group, comps } = components(dilate(any, groupRadius));
+  grouping: number | Int32Array = Math.max(1, Math.round(0.08 * Math.max(w, h)))): FlyIssues[] {
+  let group: Int32Array;
+  if (typeof grouping === 'number') {
+    const any = gray(w, h);
+    for (let i = 0; i &lt; w * h; i++) any.data[i] = labels[i] ? 1 : 0;
+    group = components(dilate(any, grouping)).labels;
+  } else group = grouping;
   const out: FlyIssues[] = [];
-  for (const c of comps) {
+  for (const c of boxesOf(group, w)) {
     const n = [0, 0, 0, 0], sx = [0, 0, 0, 0], sy = [0, 0, 0, 0];
     const part = (k: number) =&gt; {
       const m = gray(c.w, c.h);
@@ -755,19 +759,39 @@ export function dropMasks(T: number, p = 0.2, rand = Math.random) {
     labels[i] = mean.indexOf(Math.max(...mean)); // what the overlay shows
   }
 
-  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region), grouped
-  // with a GROUP-px tolerance so a fly with a gap in its mask is still measured as one fly.
-  const fly = open(anyFly, 2), { labels: inst, comps } = components(dilate(fly, GROUP));
-  const problems = anatomyIssues(labels, S, S, GROUP); // body-plan rules on the averaged prediction
+  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region).
+  // A blob missing a part (e.g. an abdomen cut off by a gap in the mask) joins its nearest neighbour within
+  // 2·GROUP px; complete flies are never merged, however close they stand.
+  const fly = open(anyFly, 2), { labels: blob, comps } = components(fly);
+  const has = comps.map(() =&gt; [0, 0, 0, 0]);
+  for (let i = 0; i &lt; N; i++) if (blob[i]) has[blob[i] - 1][labels[i]]++;
+  const root = comps.map((_, j) =&gt; j);
+  const find = (j: number): number =&gt; (root[j] === j ? j : (root[j] = find(root[j])));
+  const gap = (a: (typeof comps)[number], b: (typeof comps)[number]) =&gt; Math.hypot(
+    Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)), Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h)));
+  comps.forEach((a, j) =&gt; {
+    if (has[j][1] &amp;&amp; has[j][2] &amp;&amp; has[j][3]) return;
+    let best = -1;
+    comps.forEach((b, k) =&gt; { if (k !== j &amp;&amp; gap(a, b) &lt;= 2 * GROUP &amp;&amp; (best &lt; 0 || gap(a, b) &lt; gap(a, comps[best]))) best = k; });
+    if (best &gt;= 0) root[find(j)] = find(best);
+  });
+  const inst = new Int32Array(N);
+  for (let i = 0; i &lt; N; i++) if (blob[i]) inst[i] = find(blob[i] - 1) + 1;
+  const groups = [...new Set(comps.map((_, j) =&gt; find(j)))].map((r) =&gt; {
+    const members = comps.filter((_, j) =&gt; find(j) === r);
+    const x = Math.min(...members.map((m) =&gt; m.x)), y = Math.min(...members.map((m) =&gt; m.y));
+    return { id: r + 1, x, y, w: Math.max(...members.map((m) =&gt; m.x + m.w)) - x, h: Math.max(...members.map((m) =&gt; m.y + m.h)) - y };
+  }).sort((a, b) =&gt; a.y - b.y || a.x - b.x);
+  const problems = anatomyIssues(labels, S, S, inst); // body-plan rules on the averaged prediction
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
   let id = 0;
-  for (const c of comps) {
+  for (const c of groups) {
     const counts = Array.from({ length: T }, () =&gt; [0, 0, 0, 0]);
     let x0 = S, y0 = S, x1 = -1, y1 = -1, pixels = 0;
     for (let y = c.y; y &lt; c.y + c.h; y++)
       for (let x = c.x; x &lt; c.x + c.w; x++) {
         const i = y * S + x;
-        if (inst[i] !== c.id || !fly.data[i]) continue;
+        if (inst[i] !== c.id) continue;
         pixels++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
         for (let t = 0; t &lt; T; t++) counts[t][perPass[t * N + i]]++;
       }

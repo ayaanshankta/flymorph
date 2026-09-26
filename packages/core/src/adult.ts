@@ -1,6 +1,6 @@
 import { type RGB, resizeBilinear, gray } from './image';
 import { components } from './ccl';
-import { open, dilate } from './morph';
+import { open } from './morph';
 import { anatomyIssues } from './anatomy';
 import type { Calibration, Measurement } from './larva';
 
@@ -48,19 +48,39 @@ export function postprocess(probs: Float32Array, T: number, box: Letterbox, cal:
     labels[i] = mean.indexOf(Math.max(...mean)); // what the overlay shows
   }
 
-  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region), grouped
-  // with a GROUP-px tolerance so a fly with a gap in its mask is still measured as one fly.
-  const fly = open(anyFly, 2), { labels: inst, comps } = components(dilate(fly, GROUP));
-  const problems = anatomyIssues(labels, S, S, GROUP); // body-plan rules on the averaged prediction
+  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region).
+  // A blob missing a part (e.g. an abdomen cut off by a gap in the mask) joins its nearest neighbour within
+  // 2·GROUP px; complete flies are never merged, however close they stand.
+  const fly = open(anyFly, 2), { labels: blob, comps } = components(fly);
+  const has = comps.map(() => [0, 0, 0, 0]);
+  for (let i = 0; i < N; i++) if (blob[i]) has[blob[i] - 1][labels[i]]++;
+  const root = comps.map((_, j) => j);
+  const find = (j: number): number => (root[j] === j ? j : (root[j] = find(root[j])));
+  const gap = (a: (typeof comps)[number], b: (typeof comps)[number]) => Math.hypot(
+    Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)), Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h)));
+  comps.forEach((a, j) => {
+    if (has[j][1] && has[j][2] && has[j][3]) return;
+    let best = -1;
+    comps.forEach((b, k) => { if (k !== j && gap(a, b) <= 2 * GROUP && (best < 0 || gap(a, b) < gap(a, comps[best]))) best = k; });
+    if (best >= 0) root[find(j)] = find(best);
+  });
+  const inst = new Int32Array(N);
+  for (let i = 0; i < N; i++) if (blob[i]) inst[i] = find(blob[i] - 1) + 1;
+  const groups = [...new Set(comps.map((_, j) => find(j)))].map((r) => {
+    const members = comps.filter((_, j) => find(j) === r);
+    const x = Math.min(...members.map((m) => m.x)), y = Math.min(...members.map((m) => m.y));
+    return { id: r + 1, x, y, w: Math.max(...members.map((m) => m.x + m.w)) - x, h: Math.max(...members.map((m) => m.y + m.h)) - y };
+  }).sort((a, b) => a.y - b.y || a.x - b.x);
+  const problems = anatomyIssues(labels, S, S, inst); // body-plan rules on the averaged prediction
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
   let id = 0;
-  for (const c of comps) {
+  for (const c of groups) {
     const counts = Array.from({ length: T }, () => [0, 0, 0, 0]);
     let x0 = S, y0 = S, x1 = -1, y1 = -1, pixels = 0;
     for (let y = c.y; y < c.y + c.h; y++)
       for (let x = c.x; x < c.x + c.w; x++) {
         const i = y * S + x;
-        if (inst[i] !== c.id || !fly.data[i]) continue;
+        if (inst[i] !== c.id) continue;
         pixels++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
         for (let t = 0; t < T; t++) counts[t][perPass[t * N + i]]++;
       }

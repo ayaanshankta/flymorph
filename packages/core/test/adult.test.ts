@@ -85,3 +85,10 @@ test('a fly with a gap between thorax and abdomen is still ONE fly, flagged gap?
   expect(new Set(ms.map((m) => m.id))).toEqual(new Set([1]));
   expect(ms.find((m) => m.part === 'body')!.flag).toContain('gap?');
 });
+
+test('two complete flies standing close together stay two flies', () => {
+  // fly A x 100–119, fly B x 126–145 (6 px apart); each has head, thorax, abdomen
+  const part = (y: number) => (y < 200 || y >= 320 ? 0 : y < 220 ? 1 : y < 260 ? 2 : 3);
+  const ms = postprocess(fake(1, (x, y) => ((x >= 100 && x < 120) || (x >= 126 && x < 146) ? part(y) : 0)), 1, box, cal).measurements;
+  expect(new Set(ms.map((m) => m.id))).toEqual(new Set([1, 2]));
+});
