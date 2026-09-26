@@ -11,4 +11,4 @@ nav a { color: #9cf; }
 .keys { color: #aaa; font-size: 14px; }
 .controls { margin-block: 6px; }
 button.on { background: #ffe14d; color: #111; font-weight: 600; }
-.review .overlay { max-height: 72vh; width: auto; }
+.review .overlay { height: 72vh; width: auto; max-width: 100%; object-fit: contain; image-rendering: auto; }
