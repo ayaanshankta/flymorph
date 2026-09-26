@@ -1,0 +1,5 @@
+transformers>=4.45,<5
+onnx
+onnxruntime
+onnxscript
+numpy<2  # system scipy/sklearn are built against numpy 1.x
