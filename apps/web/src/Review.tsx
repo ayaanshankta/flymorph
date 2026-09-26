@@ -4,7 +4,7 @@
 //   SAM click     click spots on the part, press Make <part>; Smaller / Bigger step through SAM's outlines
 //   Draw outline  click the corners of a shape around the region, press Make <part> (or Erase) to fill it
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { misorderedFlies, type RGB } from '@flymorph/core';
+import { anatomyIssues, type Issue, type RGB } from '@flymorph/core';
 import { decode } from './decode';
 import { Overlay } from './Overlay';
 
@@ -13,6 +13,12 @@ const TARGET = 60;
 export const PART_COLORS: Record<number, [number, number, number]> = { 1: [255, 60, 60], 2: [40, 120, 255], 3: [80, 220, 80] };
 const PART_NAMES = ['background', 'head', 'thorax', 'abdomen'];
 const color = (l: number) => PART_COLORS[l] ?? null;
+const WHY: Record<Issue, string> = {
+  order: 'head and abdomen are on the same side of the thorax',
+  gap: 'there is a gap between parts (the mask probably missed body in between)',
+  sizes: 'the head is bigger than the thorax or abdomen',
+  pieces: 'a part is split into separate pieces',
+};
 
 type Box = [number, number, number, number]; // x0, y0, x1, y1 in photo pixels
 type Item = { sha: string; fly: number; flies: number; box: Box; session: string };
@@ -86,7 +92,7 @@ export function Review() {
   useEffect(() => { setPoints([]); setPolygon([]); setLastFix(null); setConfirmBad(false); }, [current?.sha, current?.fly]);
 
   const view = useMemo(() => (photo && labels && current ? crop(photo, labels, current.box) : null), [photo, labels, current]);
-  const bad = useMemo(() => (view ? misorderedFlies(view.labels, view.img.w, view.img.h) : []), [view]);
+  const bad = useMemo(() => (view ? anatomyIssues(view.labels, view.img.w, view.img.h) : []), [view]);
 
   const act = useCallback(async (kind: Kind, part = 0, pick = 0, pts: Point[] = points) => {
     if (!current) return;
@@ -95,7 +101,7 @@ export function Review() {
     if (kind === 'paint' && polygon.length < 3) { setStatus('Click at least 3 corners around the region first.'); return; }
     if (kind === 'approve' && bad.length && !confirmBad) {
       setConfirmBad(true);
-      setStatus('This fly has its head and abdomen on the same side of the thorax (✕), so a part is probably wrong. Fix it, or press Approve again to approve anyway.');
+      setStatus(`This fly breaks a body-plan rule (✕): ${[...new Set(bad.flatMap((b) => b.issues))].map((i) => WHY[i]).join('; ')}. Fix it, or press Approve again to approve anyway.`);
       return;
     }
     setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' || kind === 'paint' ? '' : 'SAM is thinking…');
@@ -132,7 +138,7 @@ export function Review() {
   const [bx, by] = current.box;
   const marks = [
     ...points.map(([x, y, pos]) => ({ x: x - bx - 5, y: y - by - 5, w: 10, h: 10, text: pos ? '+' : '−' })),
-    ...bad.map(({ x, y }) => ({ x: x - 12, y: y - 12, w: 24, h: 24, text: '✕ check order' })),
+    ...bad.map(({ x, y, issues }) => ({ x: x - 12, y: y - 12, w: 24, h: 24, text: `✕ ${issues.join(', ')}` })),
   ];
   const clicked = tool === 'sam' ? points.length : polygon.length;
 

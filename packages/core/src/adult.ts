@@ -1,12 +1,13 @@
 import { type RGB, resizeBilinear, gray } from './image';
 import { components } from './ccl';
-import { open } from './morph';
-import { misorderedFlies } from './anatomy';
+import { open, dilate } from './morph';
+import { anatomyIssues } from './anatomy';
 import type { Calibration, Measurement } from './larva';
 
 // Contract with the ONNX model (ml/export.py):
 //   image [T,3,S,S] float32, ImageNet-normalised · drop [T,576,1,1] float32 · → probs [T,4,S,S] softmax
 export const S = 512, DROP_C = 576, PARTS = ['head', 'thorax', 'abdomen'] as const;
+const GROUP = 12; // px at 512: mask pieces this close belong to the same fly
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 
 export type Letterbox = { scale: number; padX: number; padY: number; w: number; h: number };
@@ -47,30 +48,38 @@ export function postprocess(probs: Float32Array, T: number, box: Letterbox, cal:
     labels[i] = mean.indexOf(Math.max(...mean)); // what the overlay shows
   }
 
-  // Flies = connected blobs of "some pass thought this was fly" (so every pass is counted in the same region).
-  const { labels: inst, comps } = components(open(anyFly, 2));
+  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region), grouped
+  // with a GROUP-px tolerance so a fly with a gap in its mask is still measured as one fly.
+  const fly = open(anyFly, 2), { labels: inst, comps } = components(dilate(fly, GROUP));
+  const problems = anatomyIssues(labels, S, S, GROUP); // body-plan rules on the averaged prediction
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
-  const misordered = misorderedFlies(labels, S, S); // thorax not between head and abdomen → suspect
-  comps.filter((c) => c.area > 0.002 * N).forEach((c, f) => {
+  let id = 0;
+  for (const c of comps) {
     const counts = Array.from({ length: T }, () => [0, 0, 0, 0]);
+    let x0 = S, y0 = S, x1 = -1, y1 = -1, pixels = 0;
     for (let y = c.y; y < c.y + c.h; y++)
       for (let x = c.x; x < c.x + c.w; x++) {
         const i = y * S + x;
-        if (inst[i] === c.id) for (let t = 0; t < T; t++) counts[t][perPass[t * N + i]]++;
+        if (inst[i] !== c.id || !fly.data[i]) continue;
+        pixels++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        for (let t = 0; t < T; t++) counts[t][perPass[t * N + i]]++;
       }
-    const anatomy = misordered.some((p) => p.x >= c.x && p.x < c.x + c.w && p.y >= c.y && p.y < c.y + c.h);
-    const bbox: Measurement['bbox'] = [(c.x - box.padX) / box.scale, (c.y - box.padY) / box.scale, c.w / box.scale, c.h / box.scale];
+    if (pixels <= 0.002 * N) continue; // crumbs
+    id++;
+    const edge = x0 === 0 || y0 === 0 || x1 === S - 1 || y1 === S - 1;
+    const issues = problems.find((p) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1)?.issues ?? [];
+    const bbox: Measurement['bbox'] = [(x0 - box.padX) / box.scale, (y0 - box.padY) / box.scale, (x1 - x0 + 1) / box.scale, (y1 - y0 + 1) / box.scale];
     const series = [1, 2, 3].map((k) => counts.map((n) => n[k])).concat([counts.map((n) => n[1] + n[2] + n[3])]);
     (['head', 'thorax', 'abdomen', 'body'] as const).forEach((part, k) => {
       const mean = series[k].reduce((a, b) => a + b, 0) / T;
       if (!mean) return;
       const sd = Math.sqrt(series[k].reduce((a, b) => a + (b - mean) ** 2, 0) / T);
-      const flags = [c.edge && 'edge', part === 'body' && sd / mean > 0.1 && 'uncertain', part === 'body' && anatomy && 'anatomy?']
+      const flags = [edge && 'edge', ...(part === 'body' ? [sd / mean > 0.1 && 'uncertain', ...issues.map((i) => `${i}?`)] : [])]
         .filter(Boolean);
-      out.push({ id: f + 1, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
+      out.push({ id, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
         bbox, ...(flags.length ? { flag: flags.join(',') } : {}) });
     });
-  });
+  }
   return { measurements: out, labels };
 }
 

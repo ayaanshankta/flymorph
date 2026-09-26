@@ -136,7 +136,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outli
     <div><b>767</b><span>adult photos indexed, 44 duplicates dropped</span></div>
     <div><b>63 / 75</b><span>scale images calibrated automatically</span></div>
     <div><b>1.66 M</b><span>model parameters (SAM has ~90 M)</span></div>
-    <div><b>40</b><span>unit tests on the TypeScript core</span></div>
+    <div><b>46</b><span>unit tests on the TypeScript core</span></div>
   </div>
   <h3>How to use this course</h3>
   <ol>
@@ -285,7 +285,7 @@ flowchart LR
     <li><b>Foundation model as teacher.</b> Segment Anything (SAM) outlines almost anything you point at, but it is ~375 MB and needs prompts. We generate the prompts automatically.</li>
     <li><b>Automatic prompts.</b> Find each fly by colour saturation, get its long axis from pixel moments, and find the head end from the eye (redder than that fly’s own body). Then place points at 8% / 35% / 72% along the axis. Each part’s point is positive and the other two are negative, so SAM splits the parts.</li>
     <li><b>Human in the loop.</b> The review page shows each draft. <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>X</kbd> fly is backwards, or click and press <kbd>F</kbd> to re-prompt one part. Only approved masks are ground truth.</li>
-    <li><b>Anatomy as a free check (Ayaan’s idea).</b> The thorax always sits between the head and the abdomen, so from the thorax’s centre they point in opposite directions (negative dot product). The drafter retries a fly that breaks this, and the review page won’t approve one without a second press.</li>
+    <li><b>Body-plan rules as a free check (Ayaan’s idea).</b> <i>Order:</i> the thorax sits between head and abdomen, so from its centre they point opposite ways (negative dot product). <i>Gap:</i> head and abdomen touch the thorax; a wide gap means the mask missed body in between (measured with a chamfer distance transform). <i>Sizes:</i> the head is the smallest part. <i>Pieces:</i> no part splits into two big halves. On the 94 approved photos these rules raise 0 false alarms; on the unapproved drafts they flag 12 of 60. The drafter retries a fly that breaks the order rule, and the review page asks twice before approving a fly that breaks any rule.</li>
     <li><b>Sessions.</b> A session is the nearest folder holding a scale image, because everything calibrated together was photographed together. Top and side views of the same flies are one session.</li>
   </ul>
   <!--code:ml/sam_draft.py#axis_points-->
@@ -326,10 +326,10 @@ flowchart LR
   <ul>
     <li><b>ONNX Runtime Web</b> tries WebGPU first and falls back to WebAssembly. The CLI loads the same file with <code>onnxruntime-node</code>.</li>
     <li><b>Monte Carlo dropout.</b> Run 8 passes, each with a random 20% of bottleneck channels switched off. Where the passes agree, the model is confident. The spread of the 8 areas is the ± you report.</li>
-    <li><b>Anatomy flag.</b> A predicted fly whose head and abdomen sit on the same side of the thorax is flagged <code>anatomy?</code>, using the same rule as the review page.</li>
+    <li><b>Body-plan flags.</b> Each predicted fly is checked with the same rules as the review page and flagged <code>order?</code>, <code>gap?</code>, <code>sizes?</code> or <code>pieces?</code>. Mask pieces within 12 px are grouped, so a fly with a gap is still measured as one fly.</li>
     <li><b>Letterboxing.</b> The model sees a 512×512 square. <code>preprocess</code> shrinks and pads, and every area is scaled back by 1/scale² into original pixels, then into mm².</li>
   </ul>
-  <!--code:packages/core/src/anatomy.ts#misorderedFlies-->
+  <!--code:packages/core/src/anatomy.ts#anatomyIssues-->
   <!--code:packages/core/src/adult.ts#dropMasks-->
   <!--code:packages/core/src/adult.ts#postprocess-->
   <!--code:apps/web/src/model.ts#loadModel-->

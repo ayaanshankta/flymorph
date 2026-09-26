@@ -139,7 +139,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outli
     <div><b>767</b><span>adult photos indexed, 44 duplicates dropped</span></div>
     <div><b>63 / 75</b><span>scale images calibrated automatically</span></div>
     <div><b>1.66 M</b><span>model parameters (SAM has ~90 M)</span></div>
-    <div><b>40</b><span>unit tests on the TypeScript core</span></div>
+    <div><b>46</b><span>unit tests on the TypeScript core</span></div>
   </div>
   <h3>How to use this course</h3>
   <ol>
@@ -567,7 +567,7 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     <li><b>Foundation model as teacher.</b> Segment Anything (SAM) outlines almost anything you point at, but it is ~375 MB and needs prompts. We generate the prompts automatically.</li>
     <li><b>Automatic prompts.</b> Find each fly by colour saturation, get its long axis from pixel moments, and find the head end from the eye (redder than that fly’s own body). Then place points at 8% / 35% / 72% along the axis. Each part’s point is positive and the other two are negative, so SAM splits the parts.</li>
     <li><b>Human in the loop.</b> The review page shows each draft. <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>X</kbd> fly is backwards, or click and press <kbd>F</kbd> to re-prompt one part. Only approved masks are ground truth.</li>
-    <li><b>Anatomy as a free check (Ayaan’s idea).</b> The thorax always sits between the head and the abdomen, so from the thorax’s centre they point in opposite directions (negative dot product). The drafter retries a fly that breaks this, and the review page won’t approve one without a second press.</li>
+    <li><b>Body-plan rules as a free check (Ayaan’s idea).</b> <i>Order:</i> the thorax sits between head and abdomen, so from its centre they point opposite ways (negative dot product). <i>Gap:</i> head and abdomen touch the thorax; a wide gap means the mask missed body in between (measured with a chamfer distance transform). <i>Sizes:</i> the head is the smallest part. <i>Pieces:</i> no part splits into two big halves. On the 94 approved photos these rules raise 0 false alarms; on the unapproved drafts they flag 12 of 60. The drafter retries a fly that breaks the order rule, and the review page asks twice before approving a fly that breaks any rule.</li>
     <li><b>Sessions.</b> A session is the nearest folder holding a scale image, because everything calibrated together was photographed together. Top and side views of the same flies are one session.</li>
   </ul>
   <figure class="code"><figcaption>ml/sam_draft.py · axis_points</figcaption><pre><code class="language-python">def axis_points(bgr: np.ndarray, blob: np.ndarray, flip: bool = False) -&gt; dict[int, tuple[float, float]]:
@@ -599,24 +599,24 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
     sha, part, pts = valid(body["sha"]), int(body["part"]), body["points"]
     if part not in (1, 2, 3) or not pts:
         return jsonify(error="need part 1-3 and at least one point"), 400
-    labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
-    # SAM's favourite answer to one click is often the whole fly. Tell it where the OTHER parts are
-    # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly);
-    # the reviewer steps through them with Smaller / Bigger.
-    points = [(p[0], p[1]) for p in pts]
-    labs = [int(p[2]) for p in pts]
+    labels, inside = labels_of(sha), region(sha, int(body["fly"]))
+    # SAM's favourite answer to one click is often the whole fly. Tell it where this fly's other parts are
+    # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly); the
+    # reviewer steps through them with Smaller / Bigger.
+    points, labs = [(p[0], p[1]) for p in pts], [int(p[2]) for p in pts]
     for other in {1, 2, 3} - {part}:
-        ys, xs = np.nonzero(labels == other)
+        ys, xs = np.nonzero((labels == other) &amp; inside)
         if len(xs):
             points.append((float(xs.mean()), float(ys.mean())))
             labs.append(0)
     emb, inp = embedding(sha)
-    masks, scores = sam.masks(emb, inp, [points], [labs])
+    masks, _ = sam.masks(emb, inp, [points], [labs])
     by_size = sorted(range(3), key=lambda j: masks[0, j].sum())
-    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]]
-    labels[labels == part] = 0
+    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]] &amp; inside
+    remember(sha)
+    labels[(labels == part) &amp; inside] = 0
     labels[new] = part
-    cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
+    save(sha, labels)
     return jsonify(ok=True)</code></pre></figure>
   <div class="box pitfall"><h3>Pitfalls hit while building this</h3>
     <ul>
@@ -696,33 +696,42 @@ process.exit(failed.length ? 1 : 0);</code></pre></figure>
   <ul>
     <li><b>ONNX Runtime Web</b> tries WebGPU first and falls back to WebAssembly. The CLI loads the same file with <code>onnxruntime-node</code>.</li>
     <li><b>Monte Carlo dropout.</b> Run 8 passes, each with a random 20% of bottleneck channels switched off. Where the passes agree, the model is confident. The spread of the 8 areas is the ± you report.</li>
-    <li><b>Anatomy flag.</b> A predicted fly whose head and abdomen sit on the same side of the thorax is flagged <code>anatomy?</code>, using the same rule as the review page.</li>
+    <li><b>Body-plan flags.</b> Each predicted fly is checked with the same rules as the review page and flagged <code>order?</code>, <code>gap?</code>, <code>sizes?</code> or <code>pieces?</code>. Mask pieces within 12 px are grouped, so a fly with a gap is still measured as one fly.</li>
     <li><b>Letterboxing.</b> The model sees a 512×512 square. <code>preprocess</code> shrinks and pads, and every area is scaled back by 1/scale² into original pixels, then into mm².</li>
   </ul>
-  <figure class="code"><figcaption>packages/core/src/anatomy.ts · misorderedFlies</figcaption><pre><code class="language-typescript">// A fly's thorax sits BETWEEN its head and abdomen, so seen from the thorax's centre the head and the
-// abdomen point in opposite directions: the angle between them is over 90°, i.e. their dot product is
-// negative. A label map where both point the same way is almost certainly wrong (e.g. a head painted as
-// abdomen). Returns the thorax centre of every fly that breaks the rule; flies missing a part are skipped.
-export function misorderedFlies(labels: ArrayLike&lt;number&gt;, w: number, h: number): { x: number; y: number }[] {
-  const fly = gray(w, h);
-  for (let i = 0; i &lt; w * h; i++) fly.data[i] = labels[i] ? 1 : 0;
-  const { labels: inst, comps } = components(fly);
-  const bad: { x: number; y: number }[] = [];
+  <figure class="code"><figcaption>packages/core/src/anatomy.ts · anatomyIssues</figcaption><pre><code class="language-typescript">// Parts closer than groupRadius·2 count as one fly, so a fly with a gap is still judged as one fly.
+export function anatomyIssues(labels: ArrayLike&lt;number&gt;, w: number, h: number,
+  groupRadius = Math.max(1, Math.round(0.08 * Math.max(w, h)))): FlyIssues[] {
+  const any = gray(w, h);
+  for (let i = 0; i &lt; w * h; i++) any.data[i] = labels[i] ? 1 : 0;
+  const { labels: group, comps } = components(dilate(any, groupRadius));
+  const out: FlyIssues[] = [];
   for (const c of comps) {
-    const sum = [[0, 0], [0, 0], [0, 0], [0, 0]], n = [0, 0, 0, 0]; // per label: Σx, Σy, count
-    for (let y = c.y; y &lt; c.y + c.h; y++)
-      for (let x = c.x; x &lt; c.x + c.w; x++) {
-        const i = y * w + x, k = labels[i];
-        if (inst[i] !== c.id || !k) continue;
-        sum[k][0] += x; sum[k][1] += y; n[k]++;
-      }
-    if (!n[1] || !n[2] || !n[3]) continue;
-    const [hx, hy] = [sum[1][0] / n[1], sum[1][1] / n[1]];
-    const [tx, ty] = [sum[2][0] / n[2], sum[2][1] / n[2]];
-    const [ax, ay] = [sum[3][0] / n[3], sum[3][1] / n[3]];
-    if ((hx - tx) * (ax - tx) + (hy - ty) * (ay - ty) &gt;= 0) bad.push({ x: tx, y: ty });
+    const n = [0, 0, 0, 0], sx = [0, 0, 0, 0], sy = [0, 0, 0, 0];
+    const part = (k: number) =&gt; {
+      const m = gray(c.w, c.h);
+      for (let y = 0; y &lt; c.h; y++)
+        for (let x = 0; x &lt; c.w; x++) {
+          const i = (y + c.y) * w + x + c.x;
+          if (group[i] === c.id &amp;&amp; labels[i] === k) m.data[y * c.w + x] = 1;
+        }
+      return m;
+    };
+    const masks = [gray(0, 0), part(1), part(2), part(3)];
+    for (let k = 1; k &lt;= 3; k++)
+      masks[k].data.forEach((v, i) =&gt; { if (v) { n[k]++; sx[k] += i % c.w; sy[k] += Math.floor(i / c.w); } });
+    if (!n[1] || !n[2] || !n[3]) continue; // can't judge a fly with a missing part
+    const [hx, hy, tx, ty, ax, ay] = [sx[1] / n[1], sy[1] / n[1], sx[2] / n[2], sy[2] / n[2], sx[3] / n[3], sy[3] / n[3]];
+    const issues: Issue[] = [];
+    if ((hx - tx) * (ax - tx) + (hy - ty) * (ay - ty) &gt;= 0) issues.push('order');
+    const tooFar = Math.max(3, 0.08 * Math.max(c.w, c.h)), toThorax = distanceTo(masks[2]);
+    const gapTo = (m: typeof masks[number]) =&gt; m.data.reduce((best, v, i) =&gt; (v ? Math.min(best, toThorax[i]) : best), Infinity);
+    if (gapTo(masks[1]) &gt; tooFar || gapTo(masks[3]) &gt; tooFar) issues.push('gap');
+    if (n[1] &gt; n[2] || n[1] &gt; n[3]) issues.push('sizes');
+    if ([1, 2, 3].some((k) =&gt; components(masks[k]).comps.filter((p) =&gt; p.area &gt;= 0.4 * n[k]).length &gt; 1)) issues.push('pieces');
+    if (issues.length) out.push({ x: tx + c.x, y: ty + c.y, issues });
   }
-  return bad;
+  return out;
 }</code></pre></figure>
   <figure class="code"><figcaption>packages/core/src/adult.ts · dropMasks</figcaption><pre><code class="language-typescript">// Monte Carlo dropout: each pass switches off a random 20% of the bottleneck channels (and scales the rest
 // up so the average is unchanged). The spread of answers across passes is the model's uncertainty.
@@ -746,30 +755,38 @@ export function dropMasks(T: number, p = 0.2, rand = Math.random) {
     labels[i] = mean.indexOf(Math.max(...mean)); // what the overlay shows
   }
 
-  // Flies = connected blobs of "some pass thought this was fly" (so every pass is counted in the same region).
-  const { labels: inst, comps } = components(open(anyFly, 2));
+  // Flies = blobs of "some pass thought this was fly" (so every pass is counted in the same region), grouped
+  // with a GROUP-px tolerance so a fly with a gap in its mask is still measured as one fly.
+  const fly = open(anyFly, 2), { labels: inst, comps } = components(dilate(fly, GROUP));
+  const problems = anatomyIssues(labels, S, S, GROUP); // body-plan rules on the averaged prediction
   const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
-  const misordered = misorderedFlies(labels, S, S); // thorax not between head and abdomen → suspect
-  comps.filter((c) =&gt; c.area &gt; 0.002 * N).forEach((c, f) =&gt; {
+  let id = 0;
+  for (const c of comps) {
     const counts = Array.from({ length: T }, () =&gt; [0, 0, 0, 0]);
+    let x0 = S, y0 = S, x1 = -1, y1 = -1, pixels = 0;
     for (let y = c.y; y &lt; c.y + c.h; y++)
       for (let x = c.x; x &lt; c.x + c.w; x++) {
         const i = y * S + x;
-        if (inst[i] === c.id) for (let t = 0; t &lt; T; t++) counts[t][perPass[t * N + i]]++;
+        if (inst[i] !== c.id || !fly.data[i]) continue;
+        pixels++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        for (let t = 0; t &lt; T; t++) counts[t][perPass[t * N + i]]++;
       }
-    const anatomy = misordered.some((p) =&gt; p.x &gt;= c.x &amp;&amp; p.x &lt; c.x + c.w &amp;&amp; p.y &gt;= c.y &amp;&amp; p.y &lt; c.y + c.h);
-    const bbox: Measurement['bbox'] = [(c.x - box.padX) / box.scale, (c.y - box.padY) / box.scale, c.w / box.scale, c.h / box.scale];
+    if (pixels &lt;= 0.002 * N) continue; // crumbs
+    id++;
+    const edge = x0 === 0 || y0 === 0 || x1 === S - 1 || y1 === S - 1;
+    const issues = problems.find((p) =&gt; p.x &gt;= x0 &amp;&amp; p.x &lt;= x1 &amp;&amp; p.y &gt;= y0 &amp;&amp; p.y &lt;= y1)?.issues ?? [];
+    const bbox: Measurement['bbox'] = [(x0 - box.padX) / box.scale, (y0 - box.padY) / box.scale, (x1 - x0 + 1) / box.scale, (y1 - y0 + 1) / box.scale];
     const series = [1, 2, 3].map((k) =&gt; counts.map((n) =&gt; n[k])).concat([counts.map((n) =&gt; n[1] + n[2] + n[3])]);
     (['head', 'thorax', 'abdomen', 'body'] as const).forEach((part, k) =&gt; {
       const mean = series[k].reduce((a, b) =&gt; a + b, 0) / T;
       if (!mean) return;
       const sd = Math.sqrt(series[k].reduce((a, b) =&gt; a + (b - mean) ** 2, 0) / T);
-      const flags = [c.edge &amp;&amp; 'edge', part === 'body' &amp;&amp; sd / mean &gt; 0.1 &amp;&amp; 'uncertain', part === 'body' &amp;&amp; anatomy &amp;&amp; 'anatomy?']
+      const flags = [edge &amp;&amp; 'edge', ...(part === 'body' ? [sd / mean &gt; 0.1 &amp;&amp; 'uncertain', ...issues.map((i) =&gt; `${i}?`)] : [])]
         .filter(Boolean);
-      out.push({ id: f + 1, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
+      out.push({ id, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
         bbox, ...(flags.length ? { flag: flags.join(',') } : {}) });
     });
-  });
+  }
   return { measurements: out, labels };
 }</code></pre></figure>
   <figure class="code"><figcaption>apps/web/src/model.ts · loadModel</figcaption><pre><code class="language-typescript">export function loadModel() {

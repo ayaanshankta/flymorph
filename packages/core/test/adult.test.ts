@@ -71,9 +71,17 @@ test('labelsToImage maps the S×S label map back onto the original image through
   expect(out[20 * 1024 + 44]).toBe(0);
 });
 
-test('a fly whose head and abdomen are on the same side of the thorax is flagged anatomy?', () => {
+test('a fly whose head and abdomen are on the same side of the thorax is flagged order?', () => {
   // column 100–119: head rows 200–219, abdomen 220–259, thorax 260–299 → thorax is not in the middle
   const fly = (x: number, y: number) => (x < 100 || x >= 120 || y < 200 || y >= 300 ? 0 : y < 220 ? 1 : y < 260 ? 3 : 2);
   const body = postprocess(fake(1, fly), 1, box, cal).measurements.find((m) => m.part === 'body')!;
-  expect(body.flag).toContain('anatomy?');
+  expect(body.flag).toContain('order?');
+});
+
+test('a fly with a gap between thorax and abdomen is still ONE fly, flagged gap?', () => {
+  // head rows 200–219, thorax 220–259, [gap 260–279], abdomen 280–339
+  const fly = (x: number, y: number) => (x < 100 || x >= 120 || y < 200 || y >= 340 ? 0 : y < 220 ? 1 : y < 260 ? 2 : y < 280 ? 0 : 3);
+  const ms = postprocess(fake(1, fly), 1, box, cal).measurements;
+  expect(new Set(ms.map((m) => m.id))).toEqual(new Set([1]));
+  expect(ms.find((m) => m.part === 'body')!.flag).toContain('gap?');
 });
