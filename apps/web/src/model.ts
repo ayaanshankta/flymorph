@@ -1,33 +1,29 @@
-// Loads flynet.onnx once and exposes it as core's RunModel. Tries the GPU (WebGPU) first, then CPU (WASM).
-import * as ort from 'onnxruntime-web/webgpu';
+// Loads flynet.onnx once and exposes it as core's RunModel.
+// Uses ONNX Runtime's plain WebAssembly (CPU) build, served from this site's own ort/ folder: it is 14 MB,
+// works in every browser and fits static hosts with per-file size limits. (The WebGPU build is 28 MB.)
+import * as ort from 'onnxruntime-web/wasm';
 import { S, DROP_C, type RunModel } from '@flymorph/core';
 
-// The .wasm runtime files come from the CDN copy of the exact installed version. (Letting Vite serve its
-// bundled copy fails in dev: dependency pre-bundling breaks ORT's own path lookup.)
-ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web}/dist/`;
+ort.env.wasm.wasmPaths = new URL('ort/', document.baseURI).href;
 
-let loading: Promise<{ run: RunModel; backend: string }> | null = null;
+let loading: Promise<RunModel> | null = null;
 
-export function loadModel() {
+export function loadModel(): Promise<RunModel> {
   loading ??= (async () => {
-    const url = new URL('flynet.onnx', document.baseURI).href;
-    for (const backend of ['webgpu', 'wasm']) {
-      try {
-        const session = await ort.InferenceSession.create(url, { executionProviders: [backend] });
-        const run: RunModel = async (image, drop, T) => {
-          const out = await session.run({
-            image: new ort.Tensor('float32', image, [T, 3, S, S]),
-            drop: new ort.Tensor('float32', drop, [T, DROP_C, 1, 1]),
-          });
-          return out.probs.data as Float32Array;
-        };
-        return { run, backend };
-      } catch (e) {
-        console.warn(`[flymorph] ${backend} backend unavailable:`, e);
-      }
-    }
-    loading = null;
-    throw new Error('Could not load the adult model (flynet.onnx).');
-  })();
+    const session = await ort.InferenceSession.create(new URL('flynet.onnx', document.baseURI).href, {
+      executionProviders: ['wasm'],
+    });
+    const run: RunModel = async (image, drop, T) => {
+      const out = await session.run({
+        image: new ort.Tensor('float32', image, [T, 3, S, S]),
+        drop: new ort.Tensor('float32', drop, [T, DROP_C, 1, 1]),
+      });
+      return out.probs.data as Float32Array;
+    };
+    return run;
+  })().catch((e) => {
+    loading = null; // let the next click try again
+    throw new Error(`Could not load the adult-fly model (${(e as Error).message}).`);
+  });
   return loading;
 }
