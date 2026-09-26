@@ -6,3 +6,5 @@ ml/.venv/
 *.pt
 .DS_Store
 .superpowers/
+__pycache__/
+!ml/results/

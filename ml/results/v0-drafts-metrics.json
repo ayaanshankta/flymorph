@@ -1,0 +1,32 @@
+{
+ "labels": "drafts",
+ "ground_truth": false,
+ "test_images": 24,
+ "test_sessions": 6,
+ "parts": {
+  "head": {
+   "dice": 0.5322,
+   "median_area_err_pct": 43.78,
+   "coverage_2sd": 0.128,
+   "flies": 39
+  },
+  "thorax": {
+   "dice": 0.6308,
+   "median_area_err_pct": 26.93,
+   "coverage_2sd": 0.214,
+   "flies": 42
+  },
+  "abdomen": {
+   "dice": 0.5721,
+   "median_area_err_pct": 50.34,
+   "coverage_2sd": 0.208,
+   "flies": 48
+  },
+  "body": {
+   "dice": 0.8124,
+   "median_area_err_pct": 20.47,
+   "coverage_2sd": 0.145,
+   "flies": 69
+  }
+ }
+}
