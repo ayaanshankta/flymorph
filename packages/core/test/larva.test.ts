@@ -21,10 +21,16 @@ test('larva touching the border is flagged edge', () => {
   expect(measurements[0].flag).toContain('edge');
 });
 
-test('a blob ~2x the median is flagged merged?', () => {
-  const es = [ellipse(40, 150, 20, 70), ellipse(100, 150, 20, 70), ellipse(160, 150, 20, 70), ellipse(240, 150, 40, 70)];
+test('a single large larva is NOT flagged irregular', () => {
+  const es = [ellipse(40, 150, 20, 70), ellipse(100, 150, 20, 70), ellipse(160, 150, 20, 70), ellipse(240, 150, 40, 110)];
   const img = rgb(300, 300, (x, y) => (es.some((f) => f(x, y)) ? LARVA : BG));
-  expect(measureLarvae(img, cal, opt).measurements.map((m) => m.flag ?? '')).toEqual(['', '', '', 'merged?']);
+  expect(measureLarvae(img, cal, opt).measurements.map((m) => m.flag ?? '')).toEqual(['', '', '', '']);
+});
+
+test('a non-larva shape (two blobs joined in an L) is flagged irregular', () => {
+  const es = [ellipse(60, 150, 20, 70), ellipse(170, 110, 20, 70), (x: number, y: number) => x >= 150 && x <= 260 && y >= 170 && y <= 200];
+  const img = rgb(300, 300, (x, y) => (es.some((f) => f(x, y)) ? LARVA : BG));
+  expect(measureLarvae(img, cal, opt).measurements.map((m) => m.flag ?? '')).toEqual(['irregular', '']); // raster order: the L starts higher up
 });
 
 test('no larvae -> empty list', () => {
