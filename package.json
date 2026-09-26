@@ -1,0 +1,11 @@
+{
+  "name": "flymorph",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm test -w @flymorph/core",
+    "dev": "npm run dev -w @flymorph/web",
+    "build": "npm run build -w @flymorph/web"
+  },
+  "devDependencies": { "typescript": "^5.6.0", "vitest": "^2.1.0" }
+}

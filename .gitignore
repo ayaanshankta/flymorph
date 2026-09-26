@@ -1,0 +1,8 @@
+node_modules/
+dist/
+ml/data/
+ml/runs/
+ml/.venv/
+*.pt
+.DS_Store
+.superpowers/
