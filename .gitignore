@@ -9,3 +9,6 @@ ml/.venv/
 __pycache__/
 !ml/results/
 site/page.html
+docs/spec.md
+docs/superpowers/
+site/

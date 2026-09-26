@@ -29,7 +29,6 @@ packages/core   pure TypeScript over typed arrays: image ops, larva pipeline, FF
 apps/web        Vite + React: measure page (Web Worker for pixel loops) and #/review label page
 apps/cli        Node: same core, sharp for decoding, onnxruntime-node for the model
 ml/             Python: manifest → SAM drafts → review server → train → evaluate → ONNX export
-site/           the step-by-step build course (node site/build.mjs)
 ```
 
 The ML loop:
