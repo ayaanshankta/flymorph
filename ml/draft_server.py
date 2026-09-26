@@ -9,6 +9,7 @@
                      pick 0/1/2 = SAM's smallest/middle/largest of its three candidate outlines
   POST /api/flip    {sha}    re-draft with every fly's head/abdomen ends swapped (toggles)
   POST /api/reset   {sha}    re-draft from scratch, discarding manual fixes
+  POST /api/undo    {sha}    put back the draft as it was before the last refine / flip / reset
 
 Binds to 127.0.0.1 only. usage: ml/.venv/bin/python ml/draft_server.py
 """
@@ -26,6 +27,7 @@ app = Flask(__name__)
 sam = Sam()
 MASKS, DRAFTS, REJECTED = DATA / "masks", DATA / "drafts", DATA / "rejected.txt"
 MASKS.mkdir(exist_ok=True)
+HISTORY: dict[str, list[tuple[bytes, bool]]] = {}  # sha → earlier (draft PNG, flipped?) states, newest last
 FLIPPED: set[str] = set()  # images whose auto head/abdomen guess was reversed by the reviewer
 SESSION = {r["sha1"]: r["session"] for r in csv.DictReader(open(DATA / "manifest.csv"))}
 
@@ -34,6 +36,12 @@ def valid(sha: str) -> str:
     if sha not in SESSION:  # also stops path tricks like "../../"
         abort(400, "unknown image")
     return sha
+
+
+def remember(sha: str) -> None:
+    """Save the current draft before changing it, so Undo can bring it back. Keeps the last 20."""
+    HISTORY.setdefault(sha, []).append(((DRAFTS / f"{sha}.png").read_bytes(), sha in FLIPPED))
+    del HISTORY[sha][:-20]
 
 
 def rejected() -> set[str]:
@@ -106,6 +114,7 @@ def refine():
     masks, scores = sam.masks(emb, inp, [points], [labs])
     by_size = sorted(range(3), key=lambda j: masks[0, j].sum())
     new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]]
+    remember(sha)
     labels[labels == part] = 0
     labels[new] = part
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
@@ -116,13 +125,26 @@ def refine():
 def reset():
     """Throw away manual fixes: re-draft this image from scratch (keeps the backwards toggle)."""
     sha = valid(request.json["sha"])
+    remember(sha)
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), draft(sam, cv2.imread(str(DATA / "img" / f"{sha}.jpg")), flip=sha in FLIPPED))
     return jsonify(ok=True)
+
+
+@app.post("/api/undo")
+def undo():
+    sha = valid(request.json["sha"])
+    if not HISTORY.get(sha):
+        return jsonify(error="nothing to undo"), 400
+    png, flipped = HISTORY[sha].pop()
+    (DRAFTS / f"{sha}.png").write_bytes(png)
+    (FLIPPED.add if flipped else FLIPPED.discard)(sha)
+    return jsonify(ok=True, left=len(HISTORY[sha]))
 
 
 @app.post("/api/flip")
 def flip():
     sha = valid(request.json["sha"])
+    remember(sha)
     FLIPPED.symmetric_difference_update({sha})  # toggle, so pressing X twice undoes it
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), draft(sam, cv2.imread(str(DATA / "img" / f"{sha}.jpg")), flip=sha in FLIPPED))
     return jsonify(ok=True)

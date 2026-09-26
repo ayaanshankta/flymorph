@@ -53,7 +53,7 @@ export function Review() {
   }, [current?.sha]);
 
   // part is only used by 'refine': the fix names its part at the moment it is applied (no hidden mode).
-  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'skip', part = 0, pick = 0) => {
+  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'undo' | 'skip', part = 0, pick = 0) => {
     if (!current) return;
     if (kind === 'skip') { setQueue((q) => [...q.slice(1), q[0]]); return; }
     if (kind === 'approve' && img && labels && misorderedFlies(labels, img.w, img.h).length && !confirmBad) {
@@ -62,9 +62,10 @@ export function Review() {
       return;
     }
     if (kind === 'refine' && !points.length) { setStatus('First click the spots on the fly, then choose what they are.'); return; }
-    setStatus(kind === 'approve' || kind === 'reject' ? '' : 'SAM is thinking…');
-    await post(`/api/${kind}`, { sha: current.sha, part, points, pick });
-    if (kind === 'flip' || kind === 'refine' || kind === 'reset') {
+    setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' ? '' : 'SAM is thinking…');
+    const res = await post(`/api/${kind}`, { sha: current.sha, part, points, pick });
+    if (kind === 'undo' && !res.ok) { setStatus('Nothing to undo on this fly.'); return; }
+    if (kind === 'flip' || kind === 'refine' || kind === 'reset' || kind === 'undo') {
       setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
       // keep the clicks after a fix so Smaller / Bigger can re-ask SAM with the same spots
       if (kind === 'refine') setLastFix({ part, pick }); else { setPoints([]); setLastFix(null); }
@@ -76,6 +77,7 @@ export function Review() {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       const map: Record<string, () => void> = {
+        z: () => act('undo'),
         a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'),
         '1': () => act('refine', 1), '2': () => act('refine', 2), '3': () => act('refine', 3), escape: () => setPoints([]),
       };
@@ -99,7 +101,7 @@ export function Review() {
       </p>
       <p className="keys">
         Looks right → <b>Approve</b>. Wrong part somewhere → click on that spot (shift-click = “not this”), then press
-        what it should be: <b>Make head / thorax / abdomen</b>. Messed it up → <b>Reset</b>.
+        what it should be: <b>Make head / thorax / abdomen</b>. Messed it up → <b>Undo</b> (last step) or <b>Reset</b> (start over).
       </p>
       {current && (
         <div className="controls">
@@ -119,6 +121,7 @@ export function Review() {
             <button onClick={() => act('refine', lastFix.part, lastFix.pick + 1)} disabled={lastFix.pick === 2}>Bigger</button>
           </>}
           <button onClick={() => { setPoints([]); setLastFix(null); }} disabled={!points.length}>Clear clicks</button>
+          <button onClick={() => act('undo')}>Undo (Z)</button>
           <button onClick={() => act('reset')}>Reset to SAM draft</button>
         </div>
       )}
