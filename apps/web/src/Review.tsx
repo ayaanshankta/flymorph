@@ -48,18 +48,31 @@ export function Review() {
   const [polygon, setPolygon] = useState<[number, number][]>([]); // photo coordinates
   const [status, setStatus] = useState('');
   const [confirmBad, setConfirmBad] = useState(false); // approving a fly that fails the anatomy check needs 2 presses
+  const [approved, setApproved] = useState<Item[]>([]); // this session's approvals, newest last, for Un-approve
   const [lastFix, setLastFix] = useState<{ part: number; pick: number; pts: Point[] } | null>(null); // Smaller / Bigger
   const current = queue[0];
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (first?: Item) => {
     try {
       const q = await (await fetch(`${API}/api/queue`)).json();
-      setQueue(q.queue); setCounts(q); setStatus('');
+      const same = (i: Item) => first && i.sha === first.sha && i.fly === first.fly;
+      setQueue(first ? [...q.queue.filter(same), ...q.queue.filter((i: Item) => !same(i))] : q.queue);
+      setCounts(q); setStatus('');
     } catch {
       setStatus('Draft server not running. Start it with: ml/.venv/bin/python ml/draft_server.py');
     }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
+
+  // take back the most recent approval and show that fly again
+  const unapprove = useCallback(async () => {
+    const last = approved[approved.length - 1];
+    if (!last) { setStatus('No approvals to take back in this session.'); return; }
+    await post('/api/unapprove', { sha: last.sha, fly: last.fly });
+    setApproved((a) => a.slice(0, -1));
+    await refresh(last);
+    setStatus(`Un-approved fly ${last.fly + 1} of that photo. It's back on screen: fix it or reject it.`);
+  }, [approved, refresh]);
 
   // the photo only reloads when the photo changes; moving to its next fly keeps it
   useEffect(() => {
@@ -88,6 +101,7 @@ export function Review() {
     setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' || kind === 'paint' ? '' : 'SAM is thinking…');
     const res = await post(`/api/${kind}`, { sha: current.sha, fly: current.fly, box: current.box, part, points: pts, pick, polygon });
     if (!res.ok) { setStatus(kind === 'undo' ? 'Nothing to undo on this photo.' : `Server said no (${res.status}).`); return; }
+    if (kind === 'approve') setApproved((a) => [...a, current]);
     if (kind === 'approve' || kind === 'reject') { refresh(); return; }
     setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
     if (kind === 'refine') setLastFix({ part, pick, pts });
@@ -103,7 +117,7 @@ export function Review() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const map: Record<string, () => void> = {
-        a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'), z: () => act('undo'),
+        a: () => act('approve'), u: () => unapprove(), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'), z: () => act('undo'),
         '0': () => make(0), '1': () => make(1), '2': () => make(2), '3': () => make(3),
         '-': () => resize(-1), '=': () => resize(1), '+': () => resize(1), d: () => setTool((t) => (t === 'sam' ? 'draw' : 'sam')),
         escape: () => { setPoints([]); setPolygon([]); },
@@ -112,7 +126,7 @@ export function Review() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [act, make, resize]);
+  }, [act, make, resize, unapprove]);
 
   if (!current) return <section><p>{status || 'Queue empty. Nice.'}</p></section>;
   const [bx, by] = current.box;
@@ -130,6 +144,7 @@ export function Review() {
       </p>
       <div className="controls">
         <button onClick={() => act('approve')}>Approve fly (A)</button>
+        <button onClick={unapprove} disabled={!approved.length}>Un-approve last (U)</button>
         <button onClick={() => act('reject')}>Reject photo (R)</button>
         <button onClick={() => act('flip')}>Backwards (X)</button>
         <button onClick={() => act('skip')}>Skip (S)</button>

@@ -9,6 +9,7 @@ any fly rejects the photo (a half-labelled photo would teach the model that the 
   GET  /img/<sha>             cached photo (long side 1024)
   GET  /draft/<sha>           current draft label PNG (0 bg, 1 head, 2 thorax, 3 abdomen)
   POST /api/approve {sha, fly}
+  POST /api/unapprove {sha, fly}   take an approval back (the photo leaves ml/data/masks until re-approved)
   POST /api/reject  {sha}
   POST /api/refine  {sha, fly, part, points: [[x, y, 1|0], ...], pick}   re-prompt SAM for one part;
                     pick 0/1/2 = SAM's smallest / middle / largest candidate outline
@@ -157,6 +158,18 @@ def approve():
     if photo_done:
         shutil.copy(DRAFTS / f"{sha}.png", MASKS / f"{sha}.png")
     return jsonify(ok=True, photo_done=photo_done)
+
+
+@app.post("/api/unapprove")
+def unapprove():
+    sha, fly = valid(request.json["sha"]), int(request.json["fly"])
+    ok = fly_ok()
+    ok[sha] = [f for f in ok.get(sha, []) if f != fly]
+    if not ok[sha]:
+        del ok[sha]
+    FLY_OK.write_text(json.dumps(ok))
+    (MASKS / f"{sha}.png").unlink(missing_ok=True)
+    return jsonify(ok=True)
 
 
 @app.post("/api/reject")
