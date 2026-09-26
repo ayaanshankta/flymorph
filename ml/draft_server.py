@@ -1,8 +1,8 @@
 """Local server behind the web app's #/review page. Keeps SAM loaded so fixes are instant.
 
-Review happens ONE FLY AT A TIME: each photo is split into fly boxes (from the same detector the drafter
-uses), and every edit only changes pixels inside the box it was made in, so fixing one fly can never touch
-its neighbour. A photo becomes ground truth (ml/data/masks) once every fly in it is approved; rejecting
+Review happens ONE FLY AT A TIME: each photo is split into flies (the same detector the drafter uses).
+Every pixel belongs to the fly whose body is nearest, and an edit only changes pixels of the fly it was
+made on, so fixing one fly can never touch its neighbour. A photo becomes ground truth (ml/data/masks) once every fly in it is approved; rejecting
 any fly rejects the photo (a half-labelled photo would teach the model that the other fly is background).
 
   GET  /api/queue             flies still waiting: {sha, fly, flies, box:[x0,y0,x1,y1], session} + counts
@@ -10,11 +10,11 @@ any fly rejects the photo (a half-labelled photo would teach the model that the 
   GET  /draft/<sha>           current draft label PNG (0 bg, 1 head, 2 thorax, 3 abdomen)
   POST /api/approve {sha, fly}
   POST /api/reject  {sha}
-  POST /api/refine  {sha, box, part, points: [[x, y, 1|0], ...], pick}   re-prompt SAM for one part;
+  POST /api/refine  {sha, fly, part, points: [[x, y, 1|0], ...], pick}   re-prompt SAM for one part;
                     pick 0/1/2 = SAM's smallest / middle / largest candidate outline
-  POST /api/paint   {sha, box, part, polygon: [[x, y], ...]}   fill a drawn outline with a part (0 = erase)
-  POST /api/flip    {sha, box}   re-draft this fly with its head/abdomen ends swapped (toggles)
-  POST /api/reset   {sha, box}   re-draft this fly from scratch
+  POST /api/paint   {sha, fly, part, polygon: [[x, y], ...]}   fill a drawn outline with a part (0 = erase)
+  POST /api/flip    {sha, fly}   re-draft this fly with its head/abdomen ends swapped (toggles)
+  POST /api/reset   {sha, fly}   re-draft this fly from scratch
   POST /api/undo    {sha}        undo the last edit on this photo
 
 Binds to 127.0.0.1 and only answers the FlyMorph web app. usage: ml/.venv/bin/python ml/draft_server.py
@@ -35,8 +35,8 @@ sam = Sam()
 MASKS, DRAFTS, REJECTED, FLY_OK = DATA / "masks", DATA / "drafts", DATA / "rejected.txt", DATA / "fly_ok.json"
 MASKS.mkdir(exist_ok=True)
 APP_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
-HISTORY: dict[str, list[tuple[bytes, frozenset]]] = {}  # sha → earlier (draft PNG, flipped boxes), newest last
-FLIPPED: dict[str, set[tuple]] = {}  # sha → boxes whose head/abdomen guess the reviewer reversed
+HISTORY: dict[str, list[tuple[bytes, frozenset]]] = {}  # sha → earlier (draft PNG, flipped flies), newest last
+FLIPPED: dict[str, set[int]] = {}  # sha → flies whose head/abdomen guess the reviewer reversed
 SESSION = {r["sha1"]: r["session"] for r in csv.DictReader(open(DATA / "manifest.csv"))}
 
 
@@ -47,22 +47,41 @@ def valid(sha: str) -> str:
 
 
 @lru_cache(maxsize=None)
-def fly_boxes(sha: str) -> list[tuple[int, int, int, int]]:
-    """One padded box per fly, left to right. Photos with no detected fly get one full-image box."""
+def flies(sha: str) -> tuple[list[tuple[int, int, int, int]], np.ndarray]:
+    """Fly boxes (left to right) + an owner map: owner[y, x] = index of the fly whose body is nearest.
+
+    Boxes are generous (half the fly's size of padding; the whole photo when there is one fly) so pale
+    abdomens and legs are never cut off. Edits are limited to box ∩ owner == fly, so a big box still
+    can't touch the neighbouring fly."""
     bgr = cv2.imread(str(DATA / "img" / f"{sha}.jpg"))
     h, w = bgr.shape[:2]
+    blobs = fly_blobs(bgr)
+    if len(blobs) <= 1:
+        return [(0, 0, w, h)], np.zeros((h, w), np.int8)
+    blobs.sort(key=lambda b: np.nonzero(b)[1].min())
+    dist = np.stack([cv2.distanceTransform((~b).astype(np.uint8), cv2.DIST_L2, 5) for b in blobs])
     boxes = []
-    for blob in fly_blobs(bgr):
-        ys, xs = np.nonzero(blob)
-        pad = int(0.25 * max(np.ptp(xs), np.ptp(ys)))
+    for b in blobs:
+        ys, xs = np.nonzero(b)
+        pad = int(0.5 * max(np.ptp(xs), np.ptp(ys)))
         boxes.append((int(max(0, xs.min() - pad)), int(max(0, ys.min() - pad)),
                       int(min(w, xs.max() + pad + 1)), int(min(h, ys.max() + pad + 1))))
-    return sorted(boxes) or [(0, 0, w, h)]
+    return boxes, dist.argmin(0).astype(np.int8)
 
 
-def box_of(body) -> tuple[int, int, int, int]:
-    x0, y0, x1, y1 = (int(v) for v in body["box"])
-    return x0, y0, x1, y1
+def fly_boxes(sha: str) -> list[tuple[int, int, int, int]]:
+    return flies(sha)[0]
+
+
+def region(sha: str, fly: int) -> np.ndarray:
+    """Pixels an edit on this fly may change: inside its box AND nearer to it than to any other fly."""
+    boxes, owner = flies(sha)
+    if not 0 <= fly < len(boxes):
+        abort(400, "unknown fly")
+    x0, y0, x1, y1 = boxes[fly]
+    inside = np.zeros(owner.shape, bool)
+    inside[y0:y1, x0:x1] = owner[y0:y1, x0:x1] == fly
+    return inside
 
 
 def labels_of(sha: str) -> np.ndarray:
@@ -92,12 +111,11 @@ def embedding(sha: str):
     return sam.embed(cv2.cvtColor(cv2.imread(str(DATA / "img" / f"{sha}.jpg")), cv2.COLOR_BGR2RGB))
 
 
-def redraft_box(sha: str, box, flip: bool) -> None:
-    """Re-run the automatic draft, but only copy the result inside this fly's box."""
-    x0, y0, x1, y1 = box
+def redraft_fly(sha: str, fly: int, flip: bool) -> None:
+    """Re-run the automatic draft, but only copy the result into this fly's region."""
     fresh = draft(sam, cv2.imread(str(DATA / "img" / f"{sha}.jpg")), flip=flip)
-    labels = labels_of(sha)
-    labels[y0:y1, x0:x1] = fresh[y0:y1, x0:x1]
+    labels, inside = labels_of(sha), region(sha, fly)
+    labels[inside] = fresh[inside]
     save(sha, labels)
 
 
@@ -153,12 +171,10 @@ def reject():
 @app.post("/api/refine")
 def refine():
     body = request.json
-    sha, (x0, y0, x1, y1), part, pts = valid(body["sha"]), box_of(body), int(body["part"]), body["points"]
+    sha, part, pts = valid(body["sha"]), int(body["part"]), body["points"]
     if part not in (1, 2, 3) or not pts:
         return jsonify(error="need part 1-3 and at least one point"), 400
-    labels = labels_of(sha)
-    inside = np.zeros_like(labels, bool)
-    inside[y0:y1, x0:x1] = True
+    labels, inside = labels_of(sha), region(sha, int(body["fly"]))
     # SAM's favourite answer to one click is often the whole fly. Tell it where this fly's other parts are
     # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly); the
     # reviewer steps through them with Smaller / Bigger.
@@ -182,34 +198,32 @@ def refine():
 @app.post("/api/paint")
 def paint():
     body = request.json
-    sha, (x0, y0, x1, y1), part, poly = valid(body["sha"]), box_of(body), int(body["part"]), body["polygon"]
+    sha, part, poly = valid(body["sha"]), int(body["part"]), body["polygon"]
     if part not in (0, 1, 2, 3) or len(poly) < 3:
         return jsonify(error="need part 0-3 and at least 3 corners"), 400
     labels = labels_of(sha)
-    region = np.zeros_like(labels)
-    cv2.fillPoly(region, [np.round(np.array(poly)).astype(np.int32)], 1)
-    keep = np.zeros_like(region)
-    keep[y0:y1, x0:x1] = region[y0:y1, x0:x1]  # never paint outside this fly's box
+    shape = np.zeros_like(labels)
+    cv2.fillPoly(shape, [np.round(np.array(poly)).astype(np.int32)], 1)
     remember(sha)
-    labels[keep.astype(bool)] = part
+    labels[shape.astype(bool) & region(sha, int(body["fly"]))] = part  # never paint on another fly
     save(sha, labels)
     return jsonify(ok=True)
 
 
 @app.post("/api/flip")
 def flip():
-    sha, box = valid(request.json["sha"]), box_of(request.json)
+    sha, fly = valid(request.json["sha"]), int(request.json["fly"])
     remember(sha)
-    FLIPPED.setdefault(sha, set()).symmetric_difference_update({box})  # toggle, so pressing X twice undoes it
-    redraft_box(sha, box, flip=box in FLIPPED[sha])
+    FLIPPED.setdefault(sha, set()).symmetric_difference_update({fly})  # toggle, so pressing X twice undoes it
+    redraft_fly(sha, fly, flip=fly in FLIPPED[sha])
     return jsonify(ok=True)
 
 
 @app.post("/api/reset")
 def reset():
-    sha, box = valid(request.json["sha"]), box_of(request.json)
+    sha, fly = valid(request.json["sha"]), int(request.json["fly"])
     remember(sha)
-    redraft_box(sha, box, flip=box in FLIPPED.get(sha, set()))
+    redraft_fly(sha, fly, flip=fly in FLIPPED.get(sha, set()))
     return jsonify(ok=True)
 
 
