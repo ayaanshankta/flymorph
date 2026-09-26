@@ -1,24 +1,24 @@
 #!/usr/bin/env -S npx tsx
-// flymorph <larva|adult> <dir> --scale <scale.jpg> [--out results.csv]
+// flymorph <larva|adult> <dir> --scale <scale.jpg> [--out results.csv] [--model flynet.onnx]
 // Measures every image in <dir> (files named *scale* are skipped) and writes one CSV row per object.
 import { parseArgs } from 'node:util';
 import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { calibrateFromScale, measureLarvae, toCSV, MIN_CONFIDENCE, type Measurement, type RGB, type Calibration } from '@flymorph/core';
+import { calibrateFromScale, measureLarvae, measureAdult, toCSV, MIN_CONFIDENCE, type Measurement, type RGB, type Calibration } from '@flymorph/core';
 import { decode } from './decode';
+import { loadModel } from './adult';
 
-const USAGE = 'usage: flymorph <larva|adult> <dir> --scale <scale.jpg> [--out results.csv] [--px-per-mm N]';
+const USAGE = 'usage: flymorph <larva|adult> <dir> --scale <scale.jpg> [--out results.csv] [--px-per-mm N] [--model flynet.onnx]';
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { scale: { type: 'string' }, out: { type: 'string', default: 'results.csv' }, 'px-per-mm': { type: 'string' } },
+  options: {
+    scale: { type: 'string' }, out: { type: 'string', default: 'results.csv' }, 'px-per-mm': { type: 'string' },
+    model: { type: 'string', default: new URL('../../web/public/flynet.onnx', import.meta.url).pathname },
+  },
 });
 const [mode, dir] = positionals;
 if (!['larva', 'adult'].includes(mode) || !dir || !(values.scale || values['px-per-mm'])) {
   console.error(USAGE);
-  process.exit(2);
-}
-if (mode === 'adult') {
-  console.error('adult mode arrives in m09');
   process.exit(2);
 }
 
@@ -33,7 +33,9 @@ else {
 }
 console.error(`scale: ${cal.pxPerMm.toFixed(1)} px/mm (${cal.method})`);
 
-const measure = async (img: RGB): Promise<Measurement[]> => measureLarvae(img, cal).measurements;
+const run = mode === 'adult' ? await loadModel(values.model!) : null;
+const measure = async (img: RGB): Promise<Measurement[]> =>
+  run ? (await measureAdult(img, cal, run)).measurements : measureLarvae(img, cal).measurements;
 
 const files = (await readdir(dir)).filter((f) => /\.(jpe?g|png|tiff?)$/i.test(f) && !/scale/i.test(f)).sort();
 const rows: Record<string, string | number | undefined>[] = [];

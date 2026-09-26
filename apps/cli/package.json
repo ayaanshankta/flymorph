@@ -2,8 +2,19 @@
   "name": "@flymorph/cli",
   "private": true,
   "type": "module",
-  "bin": { "flymorph": "src/main.ts" },
-  "scripts": { "start": "tsx src/main.ts" },
-  "dependencies": { "@flymorph/core": "*", "sharp": "^0.33.5", "tsx": "^4.19.0" },
-  "devDependencies": { "@types/node": "^22.0.0" }
+  "bin": {
+    "flymorph": "src/main.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@flymorph/core": "*",
+    "onnxruntime-node": "^1.30.0",
+    "sharp": "^0.33.5",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
 }
