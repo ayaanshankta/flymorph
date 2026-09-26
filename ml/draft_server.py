@@ -100,22 +100,29 @@ def refine():
     if part not in (1, 2, 3) or not pts:
         return jsonify(error="need part 1-3 and at least one point"), 400
     labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
-    # SAM's favourite answer to one click is often the whole fly. Tell it where the OTHER parts are
+    # Work on the one fly that was clicked: the labelled blob (grown a little) under the first positive click.
+    grown = cv2.dilate((labels > 0).astype(np.uint8), np.ones((41, 41), np.uint8))
+    _, flies = cv2.connectedComponents(grown)
+    px, py = next(((int(p[0]), int(p[1])) for p in pts if int(p[2]) == 1), (int(pts[0][0]), int(pts[0][1])))
+    fly = flies == flies[min(py, labels.shape[0] - 1), min(px, labels.shape[1] - 1)]
+    if not flies[min(py, labels.shape[0] - 1), min(px, labels.shape[1] - 1)]:
+        fly = np.ones_like(labels, bool)  # clicked outside every fly: no restriction
+    # SAM's favourite answer to one click is often the whole fly. Tell it where THIS fly's other parts are
     # (their centres as negative points). SAM returns three nested outlines (e.g. eye / head / fly);
     # the reviewer steps through them with Smaller / Bigger.
     points = [(p[0], p[1]) for p in pts]
     labs = [int(p[2]) for p in pts]
     for other in {1, 2, 3} - {part}:
-        ys, xs = np.nonzero(labels == other)
+        ys, xs = np.nonzero((labels == other) & fly)
         if len(xs):
             points.append((float(xs.mean()), float(ys.mean())))
             labs.append(0)
     emb, inp = embedding(sha)
     masks, scores = sam.masks(emb, inp, [points], [labs])
     by_size = sorted(range(3), key=lambda j: masks[0, j].sum())
-    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]]
+    new = masks[0, by_size[min(max(int(body.get("pick", 0)), 0), 2)]] & fly  # never spill onto another fly
     remember(sha)
-    labels[labels == part] = 0
+    labels[(labels == part) & fly] = 0  # only on the clicked fly
     labels[new] = part
     cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
     return jsonify(ok=True)
