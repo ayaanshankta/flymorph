@@ -65,10 +65,10 @@ fill ratio ≥ 0.25 → Measurement per larva.
 
 **Scale calibration (FFT)**: grayscale → find the bar row band (rows with the strongest
 horizontal high-frequency energy) → average those rows into a 1-D profile → detrend → FFT → dominant
-period p (px per 0.01 mm tick) → pxPerMm = 100 / p; bar extent (first/last tick) as cross-check.
+period p (px per 0.01 mm tick) → pxPerMm = 100 × p (probe on 3 real scale images: 909, 597, 589 px/mm, peak/median 80–239); bar extent (first/last tick) as cross-check.
 Confidence = peak-to-median spectral ratio. Low confidence → UI asks for two clicks on bar ends.
 
-**Adult (ML)**: resize fly image so long side = 384 (letterbox) → normalise → U-Net with
+**Adult (ML)**: resize fly image so long side = 512 (letterbox) → normalise → U-Net with
 MC-dropout, T = 8 passes → per-pixel mean softmax → argmax label map → connected components of
 non-background = fly instances (min area filter) → per instance per part: area mean ± SD across
 the T passes, scaled back to original pixels, then to mm². `body` = head+thorax+abdomen.
@@ -76,17 +76,18 @@ Flag if SD/mean > 10% ("check this fly").
 
 ## 5. ML
 
-- **Teacher drafts (SAM 2 small, MPS)**: saturation/colour threshold → fly blobs → principal axis via
+- **Teacher drafts (SAM ViT-B via `transformers`, MPS)**: saturation/colour threshold → fly blobs → principal axis via
   moments → eye end found by red/orange hue → point prompts at ~15% / 45% / 75% along the axis →
   SAM masks for head / thorax / abdomen → resolve overlaps (smaller mask wins) → draft PNG.
 - **Review**: `/review` page lists drafts; keys A approve / R reject / click-to-fix (sends points to
   local `ml/draft_server.py`, which re-prompts SAM). Approved masks → `ml/data/masks/<hash>.png`.
   Only approved masks are ground truth. Target ≈ 60 approved images.
-- **Student**: U-Net, MobileNetV3-small encoder (`segmentation_models_pytorch`), dropout 0.2 in
-  decoder, 384×384, 4 classes, Dice + CE loss, augment (flip, rotate, colour jitter, bg inversion).
+- **Student**: U-Net with torchvision's ImageNet-pretrained MobileNetV3-small encoder + own small decoder;
+  MC dropout via an explicit `drop` input tensor (random channel mask generated in TS, so the ONNX graph is
+  deterministic and runs on every backend), 512×512, 4 classes, Dice + CE loss, augment (flip, rotate, colour jitter, bg inversion).
 - **Split**: by imaging session (top-level dated folder), 70/15/15; test-set leakage checked by
   SHA-1 of image bytes.
-- **Export**: ONNX opset 17, dropout kept active via a `mc` graph variant; int8 quantisation only if
+- **Export**: ONNX opset 17; int8 quantisation only if
   test Dice drops < 0.01. Target < 3 MB.
 - **Compute**: Mac MPS first; Windows RTX 3060 if an epoch takes > 2 min.
 
