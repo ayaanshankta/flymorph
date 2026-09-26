@@ -1,3 +1,8 @@
 body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
 main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 .overlay { max-width: 100%; height: auto; display: block; margin-top: 12px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.error { color: #ff8080; }
+table { border-collapse: collapse; margin: 8px 0; }
+td, th { border: 1px solid #333; padding: 4px 10px; text-align: right; }
+button { padding: 6px 14px; }
