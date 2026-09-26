@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8">
+<title>FlyMorph Build Log</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+:root {
+  --ground: #f2f5f2; --panel: #e6ece8; --ink: #1a2320; --muted: #5d6a65; --rule: #c9d3ce;
+  --accent: #b26a10; --accent-ink: #8a4f06; --code: #e8eeea; --warn-bg: #fbeed8; --warn-ink: #6b3f05;
+  --head: #d8433a; --thorax: #2f6fdc; --abdomen: #3a9a4a;
+  --k-key: #7a3fb0; --k-str: #2f7a3a; --k-num: #b0520f; --k-com: #7d8a85; --k-fn: #1f5fbf;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0e1311; --panel: #151c19; --ink: #e2e9e5; --muted: #93a19b; --rule: #2a3531;
+    --accent: #e3a247; --accent-ink: #f0bb6c; --code: #141b18; --warn-bg: #3a2a12; --warn-ink: #f3d3a0;
+    --k-key: #c79bf0; --k-str: #8fd29a; --k-num: #f0a868; --k-com: #6f7d77; --k-fn: #8ab8ff;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0e1311; --panel: #151c19; --ink: #e2e9e5; --muted: #93a19b; --rule: #2a3531;
+  --accent: #e3a247; --accent-ink: #f0bb6c; --code: #141b18; --warn-bg: #3a2a12; --warn-ink: #f3d3a0;
+  --k-key: #c79bf0; --k-str: #8fd29a; --k-num: #f0a868; --k-com: #6f7d77; --k-fn: #8ab8ff;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 17px/1.62 var(--serif); padding-inline: 16px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-block: 48px 96px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 24px 64px; } }
+
+/* the stage micrometer: chapters are ticks on a 1 mm bar */
+.ruler { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 32px); align-self: start; font-family: var(--display); }
+.ruler .label { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+.ruler ol { list-style: none; margin: 0; padding: 0 0 0 22px; position: relative; border-left: 2px solid var(--ink); }
+.ruler li { position: relative; padding-block: 5px; }
+.ruler li::before { content: ""; position: absolute; left: -22px; top: 50%; width: 14px; border-top: 2px solid var(--ink); }
+.ruler li.minor::before { width: 7px; border-top-width: 1px; }
+.ruler a { color: var(--ink); text-decoration: none; font-size: 17px; font-weight: 500; display: flex; gap: 8px; align-items: baseline; }
+.ruler a span { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 34px; }
+.ruler a:hover, .ruler a:focus-visible { color: var(--accent-ink); }
+.ruler .mm { font-size: 12px; color: var(--muted); margin-top: 10px; letter-spacing: .06em; }
+@media (max-width: 860px) {
+  .ruler { position: static; }
+  .ruler ol { display: flex; flex-wrap: wrap; gap: 4px 14px; border-left: 0; border-top: 2px solid var(--ink); padding: 10px 0 0; }
+  .ruler li { padding: 0; }
+  .ruler li::before { left: 50%; top: -12px; width: 0; height: 8px; border-top: 0; border-left: 2px solid var(--ink); }
+  .ruler li.minor { display: none; }
+}
+
+main { min-width: 0; }
+header.hero { border-bottom: 2px solid var(--ink); padding-bottom: 28px; margin-bottom: 8px; }
+.eyebrow { font-family: var(--display); letter-spacing: .14em; text-transform: uppercase; font-size: 14px; color: var(--accent-ink); font-weight: 600; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.05; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(44px, 7vw, 76px); font-weight: 700; letter-spacing: -.01em; margin-block: 6px 16px; }
+h2 { font-size: 38px; font-weight: 600; margin-block: 0 12px; }
+h3 { font-size: 22px; font-weight: 600; letter-spacing: .02em; margin-block: 28px 8px; }
+p, li { max-width: 68ch; }
+.lede { font-size: 20px; color: var(--ink); }
+.muted { color: var(--muted); }
+a { color: var(--accent-ink); }
+code { font-family: var(--mono); font-size: .86em; background: var(--code); padding: 1px 5px; border-radius: 3px; }
+
+section.chapter { padding-block: 44px 8px; border-top: 1px solid var(--rule); scroll-margin-top: 16px; }
+.chead { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+.tag { font-family: var(--mono); font-size: 13px; color: var(--muted); border: 1px solid var(--rule); padding: 2px 8px; border-radius: 3px; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 22px; }
+.facts div { background: var(--ground); padding: 12px 14px; }
+.facts b { display: block; font-family: var(--display); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facts span { font-size: 14px; color: var(--muted); }
+
+figure.code { margin: 16px 0 22px; border: 1px solid var(--rule); background: var(--code); }
+figure.code figcaption { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--rule); }
+figure.code pre { margin: 0; padding: 12px 14px; overflow-x: auto; font: 13.5px/1.55 var(--mono); tab-size: 2; }
+figure.code code { background: none; padding: 0; font-size: inherit; }
+.hljs-keyword, .hljs-built_in, .hljs-type { color: var(--k-key); }
+.hljs-string { color: var(--k-str); }
+.hljs-number, .hljs-literal { color: var(--k-num); }
+.hljs-comment { color: var(--k-com); font-style: italic; }
+.hljs-title, .hljs-title.function_ { color: var(--k-fn); }
+
+.box { border-left: 3px solid var(--accent); background: var(--panel); padding: 14px 18px; margin-block: 18px; }
+.box h3 { margin-top: 0; font-size: 18px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-ink); }
+.box > :last-child { margin-bottom: 0; }
+.box ol, .box ul { padding-left: 20px; }
+.pitfall { border-left-color: var(--head); }
+.pitfall h3 { color: var(--head); }
+.warn { background: var(--warn-bg); color: var(--warn-ink); padding: 10px 14px; }
+.note, .caption { color: var(--muted); font-size: 15px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; margin-block: 12px; font-size: 15px; }
+th, td { border-bottom: 1px solid var(--rule); padding: 6px 12px; text-align: left; }
+th { font-family: var(--display); font-weight: 600; letter-spacing: .04em; font-size: 16px; }
+table.num td:not(:first-child) { font-variant-numeric: tabular-nums; text-align: right; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--display); font-size: 17px; }
+.legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; }
+pre.mermaid { background: var(--panel); padding: 16px; overflow-x: auto; }
+kbd { font-family: var(--mono); font-size: 13px; border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; border-radius: 3px; }
+details { margin-block: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+<nav class="ruler" aria-label="Chapters">
+  <div class="label">Stage micrometer · 1 mm</div>
+  <ol>
+    <li><a href="#start"><span>0.0</span>Start here</a></li>
+    <li><a href="#m01"><span>0.1</span>Scaffold</a></li>
+    <li><a href="#m02"><span>0.2</span>Pixels</a></li>
+    <li><a href="#m03"><span>0.3</span>Larvae</a></li>
+    <li><a href="#m04"><span>0.4</span>Scale bar</a></li>
+    <li><a href="#m05"><span>0.5</span>Web app</a></li>
+    <li class="minor"><a href="#m06"><span>0.6</span>CLI</a></li>
+    <li><a href="#m07"><span>0.7</span>Labels</a></li>
+    <li><a href="#m08"><span>0.8</span>Training</a></li>
+    <li><a href="#m09"><span>0.9</span>In the browser</a></li>
+    <li><a href="#m10"><span>1.0</span>Ship it</a></li>
+    <li class="minor"><a href="#ml"><span>+</span>ML deep dive</a></li>
+    <li class="minor"><a href="#interview"><span>+</span>Interview prep</a></li>
+  </ol>
+  <div class="mm">each tick = 0.1 mm = one chapter</div>
+</nav>
+
+<main>
+<header class="hero" id="start">
+  <div class="eyebrow">A rebuild course for Ayaan</div>
+  <h1>FlyMorph, built twice</h1>
+  <p class="lede">A TypeScript app that measures <i>Drosophila</i> larvae and adult flies in mm² from your stereo-microscope photos. It uses classic image processing for larvae and a small neural network, distilled from Meta’s Segment Anything, for adult head, thorax and abdomen. Every chapter below is one git tag. Read it, close it, rebuild it in an empty folder, then compare.</p>
+  <div class="facts">
+    <div><b>767</b><span>adult photos indexed, 44 duplicates dropped</span></div>
+    <div><b>63 / 75</b><span>scale images calibrated automatically</span></div>
+    <div><b>1.66 M</b><span>model parameters (SAM has ~90 M)</span></div>
+    <div><b>36</b><span>unit tests on the TypeScript core</span></div>
+  </div>
+  <h3>How to use this course</h3>
+  <ol>
+    <li>Make an empty repo. For each chapter, read <b>Goal</b> and <b>Concepts</b>, then build it yourself.</li>
+    <li>Stuck? Read the <b>Key code</b>, or run the checkpoint command to see exactly what changed in that step.</li>
+    <li>Do the <b>Try it yourself</b> task. That is where you actually learn it.</li>
+    <li>Read the <b>Pitfalls</b>. Each one happened while building this, on your real images.</li>
+  </ol>
+  <h3>The shape of it</h3>
+<pre class="mermaid">
+flowchart LR
+  scale[scale.jpg] --> cal[calibrate: FFT of ticks → px/mm]
+  larva[larva.jpg] --> lp[larva pipeline: threshold → morphology → components]
+  adult[adult.jpg] --> net[FlyNet ONNX × 8 MC-dropout passes]
+  cal --> m[Measurements mm² ± SD]
+  lp --> m
+  net --> m
+  m --> web[React app: overlay, table, CSV]
+  m --> cli[Node CLI: folder → CSV]
+  photos[767 adult photos] --> sam[SAM drafts] --> review[your review] --> train[train FlyNet] --> net
+</pre>
+  <p class="note">Everything in <code>packages/core</code> is plain TypeScript over typed arrays: no DOM, no Node APIs. That is why the same code runs in a browser tab, a Web Worker and a Node CLI.</p>
+</header>
+
+<section class="chapter" id="m01">
+  <div class="chead"><h2>Scaffold</h2><span class="tag">m01-scaffold</span></div>
+  <p><b>Goal.</b> One repo with three packages that share code: the core library, the web app and the CLI.</p>
+  <h3>Concepts</h3>
+  <ul>
+    <li><b>npm workspaces.</b> A monorepo where <code>apps/web</code> can <code>import … from '@flymorph/core'</code> and get your local source, with no publishing.</li>
+    <li><b>TypeScript strict mode.</b> It catches <code>undefined</code> bugs at compile time.</li>
+    <li><b>Vitest.</b> A fast test runner that understands TypeScript directly.</li>
+  </ul>
+  <figure class="code"><figcaption>package.json</figcaption><pre><code class="language-json">{
+  "name": "flymorph",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm test -w @flymorph/core",
+    "dev": "npm run dev -w @flymorph/web",
+    "build": "npm run build -w @flymorph/web"
+  },
+  "devDependencies": { "typescript": "^5.6.0", "vitest": "^2.1.0" }
+}</code></pre></figure>
+  <figure class="code"><figcaption>tsconfig.base.json</figcaption><pre><code class="language-json">{ "compilerOptions": { "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
+  "strict": true, "skipLibCheck": true, "esModuleInterop": true } }</code></pre></figure>
+  <div class="box"><h3>Try it yourself</h3><p>Create the three folders and a smoke test that imports <code>VERSION</code> from core. Run <code>npm test</code> and watch it fail before <code>index.ts</code> exists, then pass.</p></div>
+  <p class="muted">Checkpoint: <code>git show m01-scaffold --stat</code></p>
+</section>
+
+<section class="chapter" id="m02">
+  <div class="chead"><h2>Pixels as numbers</h2><span class="tag">m02-image-io</span></div>
+  <p><b>Goal.</b> Load a photo into a flat array you can loop over, and draw it on a canvas.</p>
+  <h3>Concepts</h3>
+  <ul>
+    <li>An image is <code>width × height × 4</code> bytes (red, green, blue, alpha). Pixel (x, y) starts at index <code>(y·w + x)·4</code>.</li>
+    <li><b>HSV value</b> = the brightest channel. Larvae are bright on a dark cloth, so V separates them from the background.</li>
+    <li><b>Separable blur.</b> Blur rows, then columns: 10 multiplies per pixel instead of 25.</li>
+    <li>The browser decodes with <code>createImageBitmap</code> + canvas; Node decodes with <code>sharp</code>. Both hand core the same RGBA layout.</li>
+  </ul>
+  <figure class="code"><figcaption>packages/core/src/image.ts · toValue</figcaption><pre><code class="language-typescript">// HSV "value" = brightest channel. Larvae are bright on dark, so V separates them well.
+export function toValue(img: RGB): Gray {
+  const out = gray(img.w, img.h);
+  for (let i = 0, j = 0; j &lt; out.data.length; i += 4, j++)
+    out.data[j] = Math.max(img.data[i], img.data[i + 1], img.data[i + 2]);
+  return out;
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/image.ts · gaussianBlur</figcaption><pre><code class="language-typescript">// Separable blur: rows then columns (2×5 multiplies per pixel instead of 25). Edges clamp.
+export function gaussianBlur(g: Gray): Gray {
+  const { w, h } = g, tmp = new Float32Array(w * h), out = gray(w, h);
+  for (let y = 0; y &lt; h; y++)
+    for (let x = 0; x &lt; w; x++) {
+      let s = 0;
+      for (let k = -2; k &lt;= 2; k++) s += K[k + 2] * g.data[y * w + Math.min(w - 1, Math.max(0, x + k))];
+      tmp[y * w + x] = s / 16;
+    }
+  for (let y = 0; y &lt; h; y++)
+    for (let x = 0; x &lt; w; x++) {
+      let s = 0;
+      for (let k = -2; k &lt;= 2; k++) s += K[k + 2] * tmp[Math.min(h - 1, Math.max(0, y + k)) * w + x];
+      out.data[y * w + x] = Math.round(s / 16);
+    }
+  return out;
+}</code></pre></figure>
+  <figure class="code"><figcaption>apps/web/src/decode.ts · decode</figcaption><pre><code class="language-typescript">// createImageBitmap applies EXIF rotation; a canvas always hands back RGBA,
+// so grayscale JPEGs and PNGs with alpha come out in the same format.
+export async function decode(file: Blob): Promise&lt;RGB&gt; {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const c = new OffscreenCanvas(bmp.width, bmp.height);
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(bmp, 0, 0);
+  return { w: bmp.width, h: bmp.height, data: ctx.getImageData(0, 0, bmp.width, bmp.height).data };
+}</code></pre></figure>
+  <div class="box"><h3>Try it yourself</h3><p>Write <code>toGray</code> using the luminance formula <code>0.299R + 0.587G + 0.114B</code>, with a test. Compare it with <code>toValue</code> on a larva photo: which separates larva from cloth better?</p></div>
+  <p class="muted">Checkpoint: <code>git diff m01-scaffold m02-image-io</code></p>
+</section>
+
+<section class="chapter" id="m03">
+  <div class="chead"><h2>Measuring larvae without ML</h2><span class="tag">m03-larva</span></div>
+  <p><b>Goal.</b> Photo in, one area per larva out. This is the classical computer-vision pipeline, and every step is about 20 lines you can read.</p>
+  <h3>Concepts</h3>
+  <ol>
+    <li><b>Otsu threshold.</b> Try all 256 cut-offs and keep the one that best splits the histogram into two groups.</li>
+    <li><b>Morphology.</b> <i>Opening</i> (erode, then dilate) deletes specks. <i>Closing</i> (dilate, then erode) bridges small gaps.</li>
+    <li><b>Fill holes.</b> Flood the background from the border; background the flood can’t reach is a hole inside a larva.</li>
+    <li><b>Connected components.</b> Give every touching group of pixels an id, and record its area, box and centre.</li>
+    <li><b>Shape filters.</b> Minimum area in mm², elongation, fill ratio. Then <b>solidity</b> (area ÷ convex hull) flags blobs that aren’t larva-shaped.</li>
+  </ol>
+  <figure class="code"><figcaption>packages/core/src/threshold.ts · otsu</figcaption><pre><code class="language-typescript">// Otsu: try every threshold, keep the one that best separates the histogram into two groups
+// (maximises between-class variance). Adapts to exposure instead of a hardcoded cut-off.
+export function otsu(g: Gray): number {
+  const hist = new Float64Array(256);
+  for (const v of g.data) hist[v]++;
+  const n = g.data.length;
+  let sum = 0;
+  for (let i = 0; i &lt; 256; i++) sum += i * hist[i];
+  let wB = 0, sumB = 0, best = 0, t = 0;
+  for (let i = 0; i &lt; 256; i++) {
+    wB += hist[i];
+    if (!wB) continue;
+    const wF = n - wB;
+    if (!wF) break;
+    sumB += i * hist[i];
+    const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) ** 2;
+    if (between &gt; best) { best = between; t = i; }
+  }
+  return t;
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/morph.ts · pass</figcaption><pre><code class="language-typescript">// Square structuring element of side 2r+1, applied separably (rows, then columns): O(n·r), not O(n·r²).
+// dilate: a pixel turns on if ANY neighbour is on. erode: stays on only if ALL neighbours are on.
+function pass(m: Gray, r: number, dilating: boolean): Gray {
+  const { w, h } = m, tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  const line = (get: (i: number) =&gt; number, set: (i: number, v: number) =&gt; void, len: number) =&gt; {
+    for (let i = 0; i &lt; len; i++) {
+      let v = dilating ? 0 : 1;
+      for (let k = Math.max(0, i - r); k &lt;= Math.min(len - 1, i + r); k++)
+        if (dilating ? get(k) : !get(k)) { v = dilating ? 1 : 0; break; }
+      set(i, v);
+    }
+  };
+  for (let y = 0; y &lt; h; y++) line((k) =&gt; m.data[y * w + k], (i, v) =&gt; (tmp[y * w + i] = v), w);
+  for (let x = 0; x &lt; w; x++) line((k) =&gt; tmp[k * w + x], (i, v) =&gt; (out[i * w + x] = v), h);
+  return { w, h, data: out };
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/fill.ts · fillHoles</figcaption><pre><code class="language-typescript">// Flood the background from every border pixel. Background the flood can't reach is a hole → fill it.
+export function fillHoles(m: Gray): Gray {
+  const { w, h } = m, seen = new Uint8Array(w * h), stack: number[] = [];
+  const push = (i: number) =&gt; {
+    if (!m.data[i] &amp;&amp; !seen[i]) { seen[i] = 1; stack.push(i); }
+  };
+  for (let x = 0; x &lt; w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y &lt; h; y++) { push(y * w); push(y * w + w - 1); }
+  while (stack.length) {
+    const i = stack.pop()!, x = i % w, y = (i - x) / w;
+    if (x &gt; 0) push(i - 1);
+    if (x &lt; w - 1) push(i + 1);
+    if (y &gt; 0) push(i - w);
+    if (y &lt; h - 1) push(i + w);
+  }
+  return { w, h, data: m.data.map((v, i) =&gt; (v || !seen[i] ? 1 : 0)) };
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/ccl.ts · components</figcaption><pre><code class="language-typescript">// Connected-component labelling by flood fill (8-connected: diagonals count as touching).
+// labels[i] = component id (1, 2, …) or 0 for background. Ids follow raster order of each blob's first pixel.
+export function components(m: Gray): { labels: Int32Array; comps: Component[] } {
+  const { w, h } = m, labels = new Int32Array(w * h), comps: Component[] = [], stack: number[] = [];
+  for (let s = 0; s &lt; w * h; s++) {
+    if (!m.data[s] || labels[s]) continue;
+    const id = comps.length + 1;
+    let area = 0, sx = 0, sy = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
+    labels[s] = id;
+    stack.push(s);
+    while (stack.length) {
+      const i = stack.pop()!, x = i % w, y = (i - x) / w;
+      area++; sx += x; sy += y;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+      for (let dy = -1; dy &lt;= 1; dy++)
+        for (let dx = -1; dx &lt;= 1; dx++) {
+          const nx = x + dx, ny = y + dy, j = ny * w + nx;
+          if (nx &gt;= 0 &amp;&amp; ny &gt;= 0 &amp;&amp; nx &lt; w &amp;&amp; ny &lt; h &amp;&amp; m.data[j] &amp;&amp; !labels[j]) { labels[j] = id; stack.push(j); }
+        }
+    }
+    comps.push({ id, area, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, cx: sx / area, cy: sy / area,
+      edge: x0 === 0 || y0 === 0 || x1 === w - 1 || y1 === h - 1 });
+  }
+  return { labels, comps };
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/larva.ts · measureLarvae</figcaption><pre><code class="language-typescript">export function measureLarvae(img: RGB, cal: Calibration, opt: Partial&lt;LarvaOptions&gt; = {}) {
+  const o = { ...DEFAULTS, ...opt };
+  const v = gaussianBlur(toValue(img));
+  // Larvae are bright on dark. Otsu adapts to exposure; minThreshold stops it chasing background noise
+  // when an image has no larvae at all.
+  const t = Math.max(otsu(v), o.minThreshold);
+  const r = Math.max(1, Math.round(img.w / 1400)); // ≈ the old 5 px / 9 px kernels at 3584 px wide
+  const mask = fillHoles(close(open(binarize(v, t), r), 2 * r));
+  const { labels, comps } = components(mask);
+  const px2 = cal.pxPerMm ** 2;
+
+  const kept = comps.filter((c) =&gt; {
+    const aspect = Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)); // orientation-free (old code used h/w)
+    return c.area / px2 &gt;= o.minAreaMm2 &amp;&amp; aspect &gt;= o.minAspect &amp;&amp; c.area / (c.w * c.h) &gt;= o.minFill;
+  });
+  const keep = new Set(kept.map((c) =&gt; c.id));
+  for (let i = 0; i &lt; labels.length; i++) if (!keep.has(labels[i])) labels[i] = 0;
+
+  const measurements: Measurement[] = kept.map((c, k) =&gt; {
+    const flags = [c.edge &amp;&amp; 'edge', solidity(labels, img.w, c) &lt; MIN_SOLIDITY &amp;&amp; 'irregular'].filter(Boolean);
+    return {
+      id: k + 1, part: 'larva', areaPx: c.area, areaMm2: c.area / px2, bbox: [c.x, c.y, c.w, c.h],
+      ...(flags.length ? { flag: flags.join(',') } : {}),
+    };
+  });
+  return { measurements, labels };
+}</code></pre></figure>
+  <div class="box pitfall"><h3>Pitfalls hit while building this</h3>
+    <ul>
+      <li><b>The old fixed threshold under-measured.</b> <code>segment.py</code> kept pixels with V &gt; 95. On <code>mefsp_norm food_2.jpg</code>, that cut into the translucent head and flanks, and the bites open to the outside, so fill-holes can’t repair them. Otsu chose 75 and follows the real edge; areas came out 7–15% larger. The old CSV also counted two specks as larvae.</li>
+      <li><b>“Merged?” by size was wrong.</b> A rule of “bigger than 1.8× the median” flagged a single, genuinely big larva. Solidity works better: real singles scored 0.84–0.98 across 38 images. Every blob under 0.8 was a larva fused with the <b>orange tape strip</b> in the 260212 photos.</li>
+      <li><b>Dark head tips get missed.</b> The mouth hooks show through as a dark notch at the front, which slightly under-measures some larvae.</li>
+      <li><b>Test order.</b> Components are numbered in raster order (top row first). Two tests expected the wrong order, and the code was right.</li>
+    </ul>
+  </div>
+  <div class="box"><h3>Try it yourself</h3><ol>
+    <li>Fix the orange-tape problem: drop pixels whose HSV saturation is high <i>and</i> hue is orange before thresholding. Check <code>mch_standard.jpg</code> loses its <code>irregular</code> flags.</li>
+    <li>Fix the dark tips: after filling, take each larva’s convex hull within a few pixels of its outline. Measure how much the areas change.</li>
+  </ol></div>
+  <p class="muted">Checkpoint: <code>git diff m02-image-io m03-larva -- packages/core</code></p>
+</section>
+
+<section class="chapter" id="m04">
+  <div class="chead"><h2>Reading the scale bar with an FFT</h2><span class="tag">m04-calibration</span></div>
+  <p><b>Goal.</b> Turn the stage-micrometer photo into pixels per millimetre automatically. The old code had <code>(2178 - 1500) / 1.0</code> hardcoded, with the auto-detection commented out.</p>
+  <h3>Concepts</h3>
+  <ul>
+    <li>The micrometer is a 1 mm bar with a tick every 0.01 mm, longer ticks every 0.05 mm and 0.1 mm. Evenly spaced ticks are a <b>periodic signal</b>, and the Fourier transform finds periods.</li>
+    <li>Average a band of rows into a 1-D brightness profile, remove slow lighting changes, window it, FFT it. The tallest peak is the tick spacing <i>p</i>, and <b>px/mm = ticks per mm × p</b>.</li>
+    <li><b>Which rows?</b> Scan every band and keep the most periodic one. Texture and the dark ring are not periodic, so a faint bar still wins.</li>
+    <li><b>Which ticks?</b> The bar is exactly 1 mm long, so (periodic stretch ÷ period) must be 100, 20 or 10. That both picks the tick set and rejects impostors.</li>
+  </ul>
+  <figure class="code"><figcaption>packages/core/src/calibrate.ts · calibrateFromScale</figcaption><pre><code class="language-typescript">// The stage micrometer is a 1 mm bar with ticks every 0.01 mm, longer ones every 0.05 mm and every 0.1 mm.
+// Evenly spaced = periodic, and the FFT finds periods: tick spacing (px) × ticks per mm = pixels per mm.
+// Which tick set wins depends on focus and zoom, so we count how many periods the bar spans to tell.
+// 1. For each horizontal band of rows, build a 1-D brightness profile and measure how strongly it is
+//    periodic (FFT peak / median). The bar's band wins even when it is faint and the background is
+//    textured, because texture is not periodic.
+// 2. A parabola through the winning peak and its neighbours gives sub-bin accuracy.
+// 3. Cross-check that the periodic stretch is as long as 100 ticks should be.
+export function calibrateFromScale(img: RGB, tickSets: number[] = [100, 20, 10]) {
+  const g = toValue(img);
+  let best = spectrum(g, BAND);
+  for (let y = BAND + STEP; y &lt; g.h - BAND; y += STEP) {
+    const s = spectrum(g, y);
+    if (s.strength &gt; best.strength) best = s;
+  }
+  const { mag, k, strength, detr, row } = best;
+  const n = (mag.length - 1) * 2, a = mag[k - 1], b = mag[k], c = mag[k + 1];
+  const periodPx = n / (k + (0.5 * (a - c)) / (a - 2 * b + c || 1));
+  // The bar is 1 mm, so (periodic stretch ÷ period) must be one of the tick counts. Larva segments,
+  // fabric or noise can make a strong peak, but not one spanning 10, 20 or 100 periods.
+  const extentPx = periodicExtent(detr, periodPx), count = extentPx / periodPx;
+  const ticksPerMm = tickSets.reduce((b, t) =&gt; (Math.abs(Math.log(count / t)) &lt; Math.abs(Math.log(count / b)) ? t : b));
+  const ratio = count / ticksPerMm;
+  const confidence = ratio &gt; 0.85 &amp;&amp; ratio &lt; 1.15 ? strength : 0;
+  return { pxPerMm: periodPx * ticksPerMm, confidence, method: 'fft' as const, row, periodPx, extentPx, ticksPerMm };
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/calibrate.ts · periodicExtent</figcaption><pre><code class="language-typescript">// Length of the longest run where the signal oscillates at `period`: multiply by a cosine and a sine
+// at that period (demodulation), average over a few periods, and threshold the resulting amplitude.
+function periodicExtent(sig: Float64Array, period: number): number {
+  const w = sig.length, win = Math.max(4, Math.round(4 * period)), amp = new Float64Array(w);
+  const cs = new Float64Array(w + 1), sn = new Float64Array(w + 1); // prefix sums
+  for (let x = 0; x &lt; w; x++) {
+    const ph = (2 * Math.PI * x) / period;
+    cs[x + 1] = cs[x] + sig[x] * Math.cos(ph);
+    sn[x + 1] = sn[x] + sig[x] * Math.sin(ph);
+  }
+  let max = 0;
+  for (let x = 0; x &lt; w; x++) {
+    const a = Math.max(0, x - (win &gt;&gt; 1)), z = Math.min(w, a + win);
+    amp[x] = Math.hypot(cs[z] - cs[a], sn[z] - sn[a]) / (z - a);
+    max = Math.max(max, amp[x]);
+  }
+  let best = 0, run = 0;
+  for (let x = 0; x &lt; w; x++) {
+    run = amp[x] &gt; 0.25 * max ? run + 1 : 0;
+    best = Math.max(best, run);
+  }
+  // The averaging window blurs each end outwards by ~win/4 above the 25% line; take that back off.
+  return Math.max(0, best - win / 2);
+}</code></pre></figure>
+  <div class="box pitfall"><h3>Pitfalls hit while building this</h3>
+    <ul>
+      <li><b>A larva photo passed as a scale.</b> Larval body segments are periodic too. Version 1 returned 3903 px/mm with confidence 38. The length check (a 1 mm bar must span 100 ticks) now rejects it.</li>
+      <li><b>Faint bars on foam.</b> Picking the row with the most edges chose the foam texture; picking the most <i>periodic</i> row fixed it.</li>
+      <li><b>Widening the search broke everything.</b> Allowing periods up to 150 px let low-frequency lighting win in 58 of 75 images. Low frequencies always carry more energy, so the range went back to 3–40 px.</li>
+      <li><b>Result:</b> 63 of your 75 scale images calibrate automatically, with zero false accepts. Images from the same session agree (every vGat scale gives 1256–1261 px/mm). The other 12 are blurry low-zoom bars that fall back to two clicks.</li>
+    </ul>
+  </div>
+  <div class="box"><h3>Try it yourself</h3><p>Write <code>fftMag</code> yourself (radix-2 Cooley–Tukey) and test that a cosine with 5 cycles peaks at bin 5. Then plot the spectrum of a real scale image’s profile and find the 0.01 mm and 0.05 mm peaks by eye.</p></div>
+  <p class="muted">Checkpoint: <code>git diff m03-larva m04-calibration</code></p>
+</section>
+
+<section class="chapter" id="m05">
+  <div class="chead"><h2>The web app</h2><span class="tag">m05-measure-ui</span></div>
+  <p><b>Goal.</b> Drop a photo and a scale image to get an overlay, a table and a CSV, without the page freezing.</p>
+  <h3>Concepts</h3>
+  <ul>
+    <li><b>Web Worker.</b> A 10-megapixel image takes about 4 s of pixel loops. A worker runs them on another thread so the UI stays responsive. Vite bundles it from <code>new URL('./worker.ts', import.meta.url)</code>.</li>
+    <li><b>Transferable buffers.</b> <code>postMessage(msg, [labels.buffer])</code> hands memory over instead of copying 40 MB.</li>
+    <li><b>Canvas overlay.</b> Paint the photo, tint labelled pixels, draw boxes. CSS scales the canvas, and clicks convert back to image pixels.</li>
+    <li><b>Errors people can act on.</b> Scale bar not found? Show the scale image and ask for two clicks.</li>
+  </ul>
+  <figure class="code"><figcaption>apps/web/src/worker.ts</figcaption><pre><code class="language-typescript">// Runs the heavy pixel loops off the main thread so the page never freezes (≈4 s for a 10 MP image).
+import { calibrateFromScale, measureLarvae, MIN_CONFIDENCE, type Calibration, type RGB } from '@flymorph/core';
+
+// mode 'calibrate' only reads the scale (adult mode runs the model on the main thread, where WebGPU lives).
+export type WorkerRequest = { mode: 'larva' | 'calibrate'; img: RGB; scale: RGB | null; manualPxPerMm?: number };
+
+self.onmessage = (e: MessageEvent&lt;WorkerRequest&gt;) =&gt; {
+  const { mode, img, scale, manualPxPerMm } = e.data;
+  const post = (msg: unknown, transfer: Transferable[] = []) =&gt; (self as unknown as Worker).postMessage(msg, transfer);
+  try {
+    let cal: Calibration;
+    if (manualPxPerMm) cal = { pxPerMm: manualPxPerMm, confidence: Infinity, method: 'manual' };
+    else if (!scale) return post({ ok: false, error: 'Add a scale image to calibrate.' });
+    else {
+      cal = calibrateFromScale(scale);
+      if (cal.confidence &lt; MIN_CONFIDENCE)
+        return post({ ok: false, needsScale: true, error: 'Could not find the micrometer bar automatically. Click its two ends on the scale image.' });
+    }
+    if (mode === 'calibrate') return post({ ok: true, cal, measurements: [], labels: new Int32Array(0) });
+    const { measurements, labels } = measureLarvae(img, cal);
+    post({ ok: true, cal, measurements, labels }, [labels.buffer]);
+  } catch (err) {
+    post({ ok: false, error: (err as Error).message ?? String(err) });
+  }
+};</code></pre></figure>
+  <figure class="code"><figcaption>apps/web/src/Measure.tsx · inWorker</figcaption><pre><code class="language-typescript">function inWorker(req: WorkerRequest): Promise&lt;Result&gt; {
+  const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+  return new Promise((resolve, reject) =&gt; {
+    worker.onmessage = (e) =&gt; {
+      worker.terminate();
+      e.data.ok ? resolve(e.data) : reject(Object.assign(new Error(e.data.error), { needsScale: !!e.data.needsScale }));
+    };
+    worker.onerror = (e) =&gt; { worker.terminate(); reject(new Error(e.message)); };
+    worker.postMessage(req);
+  });
+}</code></pre></figure>
+  <div class="box pitfall"><h3>Pitfalls hit while building this</h3><ul><li>The first <kbd>Measure</kbd> click did nothing because the button was disabled while the 7 MB JPEG decoded. The button now reads “Loading image…”.</li></ul></div>
+  <div class="box"><h3>Try it yourself</h3><p>Accept several larva photos at once and show one table with a <code>file</code> column. The worker already handles one image, so loop it.</p></div>
+</section>
+
+<section class="chapter" id="m06">
+  <div class="chead"><h2>The Node CLI</h2><span class="tag">m06-cli</span></div>
+  <p><b>Goal.</b> <code>flymorph larva ./folder --scale scale.jpg</code> produces one CSV for a whole imaging session. That’s what the lab actually runs.</p>
+  <ul>
+    <li><code>node:util parseArgs</code> handles flags with no dependency. <code>sharp</code> decodes images.</li>
+    <li>One bad file doesn’t kill the batch: failures are listed at the end and the exit code is 1.</li>
+    <li>Same core, same numbers: the CLI and the web app give 0.39334 mm² for the same larva.</li>
+  </ul>
+  <figure class="code"><figcaption>apps/cli/src/main.ts</figcaption><pre><code class="language-typescript">#!/usr/bin/env -S npx tsx
+// flymorph &lt;larva|adult&gt; &lt;dir&gt; --scale &lt;scale.jpg&gt; [--out results.csv] [--model flynet.onnx]
+// Measures every image in &lt;dir&gt; (files named *scale* are skipped) and writes one CSV row per object.
+import { parseArgs } from 'node:util';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { calibrateFromScale, measureLarvae, measureAdult, toCSV, MIN_CONFIDENCE, type Measurement, type RGB, type Calibration } from '@flymorph/core';
+import { decode } from './decode';
+import { loadModel } from './adult';
+
+const USAGE = 'usage: flymorph &lt;larva|adult&gt; &lt;dir&gt; --scale &lt;scale.jpg&gt; [--out results.csv] [--px-per-mm N] [--model flynet.onnx]';
+const { positionals, values } = parseArgs({
+  allowPositionals: true,
+  options: {
+    scale: { type: 'string' }, out: { type: 'string', default: 'results.csv' }, 'px-per-mm': { type: 'string' },
+    model: { type: 'string', default: new URL('../../web/public/flynet.onnx', import.meta.url).pathname },
+  },
+});
+const [mode, dir] = positionals;
+if (!['larva', 'adult'].includes(mode) || !dir || !(values.scale || values['px-per-mm'])) {
+  console.error(USAGE);
+  process.exit(2);
+}
+
+let cal: Calibration;
+if (values['px-per-mm']) cal = { pxPerMm: Number(values['px-per-mm']), confidence: Infinity, method: 'manual' };
+else {
+  cal = calibrateFromScale(await decode(values.scale!));
+  if (cal.confidence &lt; MIN_CONFIDENCE) {
+    console.error(`scale bar not found in ${values.scale}; measure it by hand and pass --px-per-mm`);
+    process.exit(1);
+  }
+}
+console.error(`scale: ${cal.pxPerMm.toFixed(1)} px/mm (${cal.method})`);
+
+const run = mode === 'adult' ? await loadModel(values.model!) : null;
+const measure = async (img: RGB): Promise&lt;Measurement[]&gt; =&gt;
+  run ? (await measureAdult(img, cal, run)).measurements : measureLarvae(img, cal).measurements;
+
+const files = (await readdir(dir)).filter((f) =&gt; /\.(jpe?g|png|tiff?)$/i.test(f) &amp;&amp; !/scale/i.test(f)).sort();
+const rows: Record&lt;string, string | number | undefined&gt;[] = [];
+const failed: string[] = [];
+for (const f of files) {
+  try {
+    const ms = await measure(await decode(join(dir, f)));
+    for (const m of ms)
+      rows.push({ file: f, id: m.id, part: m.part, area_mm2: m.areaMm2.toFixed(5), sd_mm2: m.sdMm2?.toFixed(5),
+        area_px: m.areaPx, flag: m.flag, px_per_mm: cal.pxPerMm.toFixed(2) });
+    console.error(`✓ ${f}: ${ms.length}`);
+  } catch (e) {
+    failed.push(f);
+    console.error(`✗ ${f}: ${(e as Error).message}`);
+  }
+}
+await writeFile(values.out!, toCSV(rows));
+console.error(`${rows.length} rows → ${values.out}${failed.length ? `; ${failed.length} failed: ${failed.join(', ')}` : ''}`);
+process.exit(failed.length ? 1 : 0);</code></pre></figure>
+  <div class="box"><h3>Try it yourself</h3><p>Add <code>--overlays out/</code>, which writes each photo with its larvae outlined (<code>sharp</code> can composite a PNG mask).</p></div>
+</section>
+
+<section class="chapter" id="m07">
+  <div class="chead"><h2>Labels: SAM drafts, you decide</h2><span class="tag">m07-labels</span></div>
+  <p><b>Goal.</b> Get about 60 correct head/thorax/abdomen masks without painting a single pixel by hand.</p>
+  <div class="legend"><span><i style="background:var(--head)"></i>head</span><span><i style="background:var(--thorax)"></i>thorax</span><span><i style="background:var(--abdomen)"></i>abdomen</span></div>
+  <h3>Concepts</h3>
+  <ul>
+    <li><b>Foundation model as teacher.</b> Segment Anything (SAM) outlines almost anything you point at, but it is ~375 MB and needs prompts. We generate the prompts automatically.</li>
+    <li><b>Automatic prompts.</b> Find each fly by colour saturation, get its long axis from pixel moments, and find the head end from the eye (redder than that fly’s own body). Then place points at 8% / 35% / 72% along the axis. Each part’s point is positive and the other two are negative, so SAM splits the parts.</li>
+    <li><b>Human in the loop.</b> The review page shows each draft. <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>X</kbd> fly is backwards, or click and press <kbd>F</kbd> to re-prompt one part. Only approved masks are ground truth.</li>
+    <li><b>Sessions.</b> A session is the nearest folder holding a scale image, because everything calibrated together was photographed together. Top and side views of the same flies are one session.</li>
+  </ul>
+  <figure class="code"><figcaption>ml/sam_draft.py · axis_points</figcaption><pre><code class="language-python">def axis_points(bgr: np.ndarray, blob: np.ndarray, flip: bool = False) -&gt; dict[int, tuple[float, float]]:
+    ys, xs = np.nonzero(blob)
+    c = np.array([xs.mean(), ys.mean()])
+    evals, evecs = np.linalg.eigh(np.cov(np.stack([xs, ys])))
+    u = evecs[:, np.argmax(evals)]  # long axis direction
+    t = (np.stack([xs, ys], 1) - c) @ u
+    lo, hi = np.percentile(t, 1), np.percentile(t, 99)
+
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    near = cv2.dilate(blob.astype(np.uint8), np.ones((25, 25), np.uint8)).astype(bool)
+    # Eyes are redder than this fly's own body (red or orange eyes on a yellow-tan body), so compare to the body
+    body_h, body_s = np.median(hsv[:, :, 0][blob]), np.median(hsv[:, :, 1][blob])
+    h = hsv[:, :, 0].astype(int)
+    eye = near &amp; ((h &lt; body_h - 6) | (h &gt; 165)) &amp; (hsv[:, :, 1] &gt; body_s) &amp; (hsv[:, :, 2] &gt; 60)
+    if eye.sum() &gt; 50:
+        ey, ex = np.nonzero(eye)
+        head_is_lo = ((np.stack([ex, ey], 1) - c) @ u).mean() &lt; (lo + hi) / 2
+    else:  # no eye colour: the head end is the narrower end
+        perp = (np.stack([xs, ys], 1) - c) @ np.array([-u[1], u[0]])
+        w_lo = np.ptp(perp[t &lt; lo + 0.15 * (hi - lo)]) if (t &lt; lo + 0.15 * (hi - lo)).any() else 0
+        w_hi = np.ptp(perp[t &gt; hi - 0.15 * (hi - lo)]) if (t &gt; hi - 0.15 * (hi - lo)).any() else 0
+        head_is_lo = w_lo &lt; w_hi
+    start, end = (lo, hi) if head_is_lo != flip else (hi, lo)
+    return {k: tuple(c + u * (start + f * (end - start))) for k, (_, f, _) in PARTS.items()}</code></pre></figure>
+  <figure class="code"><figcaption>ml/draft_server.py · refine</figcaption><pre><code class="language-python">def refine():
+    body = request.json
+    sha, part, pts = valid(body["sha"]), int(body["part"]), body["points"]
+    if part not in (1, 2, 3) or not pts:
+        return jsonify(error="need part 1-3 and at least one point"), 400
+    emb, inp = embedding(sha)
+    masks, scores = sam.masks(emb, inp, [[(p[0], p[1]) for p in pts]], [[int(p[2]) for p in pts]])
+    new = masks[0, int(np.argmax(scores[0]))]
+    labels = cv2.imread(str(DRAFTS / f"{sha}.png"), cv2.IMREAD_GRAYSCALE)
+    labels[labels == part] = 0
+    labels[new] = part
+    cv2.imwrite(str(DRAFTS / f"{sha}.png"), labels)
+    return jsonify(ok=True)</code></pre></figure>
+  <div class="box pitfall"><h3>Pitfalls hit while building this</h3>
+    <ul>
+      <li>About 1 in 8 drafts had the fly backwards; orange-eyed flies failed a fixed “red hue” test. The fix compares against the fly’s own body colour and adds the <kbd>X</kbd> key.</li>
+      <li>44 photos were byte-identical copies in different folders. Content hashes (SHA-1) catch them, where folder names can’t.</li>
+      <li><code>pip</code> quietly installed numpy 2, which broke the conda scipy that transformers imports. The fix is <code>numpy&lt;2</code> in requirements.</li>
+      <li>MPS (the Mac GPU) has no float64; SAM point tensors must be float32.</li>
+    </ul>
+  </div>
+  <div class="box"><h3>Your turn, for real</h3><p>Run <code>ml/.venv/bin/python ml/draft_server.py</code> and <code>npm run dev</code>, open <code>#/review</code>, and approve 60. Expect about 15 minutes per 50.</p></div>
+</section>
+
+<section class="chapter" id="m08">
+  <div class="chead"><h2>Training the student</h2><span class="tag">m08-model</span></div>
+  <p><b>Goal.</b> A 1.66 M-parameter U-Net that reproduces your approved masks on flies it has never seen, and is small enough for a browser.</p>
+  <h3>Concepts</h3>
+  <ul>
+    <li><b>U-Net.</b> The encoder shrinks the image into features, the decoder grows them back into a label per pixel, and skip connections carry fine edges across.</li>
+    <li><b>Transfer learning.</b> The encoder is MobileNetV3-small pretrained on ImageNet. It already knows edges and textures, which is why about 60 labels can be enough.</li>
+    <li><b>Loss = cross-entropy + Dice.</b> Cross-entropy alone is dominated by the background, which is about 90% of pixels; Dice scores overlap per part.</li>
+    <li><b>Split by session.</b> Photos from one session are near-copies. Random splitting would put siblings in train and test and measure memory instead of skill.</li>
+    <li><b>Dropout as an input.</b> The bottleneck is multiplied by a <code>drop</code> tensor. That keeps the ONNX graph deterministic and moves the randomness to TypeScript.</li>
+  </ul>
+  <figure class="code"><figcaption>ml/flynet.py · FlyNet</figcaption><pre><code class="language-python">class FlyNet(nn.Module):
+    def __init__(self, pretrained: bool = True):
+        super().__init__()
+        f = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.DEFAULT if pretrained else None).features
+        # stages end at strides 2, 4, 8, 16, 32 with 16, 16, 24, 48, 576 channels
+        self.stages = nn.ModuleList([f[:1], f[1:2], f[2:4], f[4:9], f[9:]])
+        widths, skips = [96, 48, 32, 16], [48, 24, 16, 16]
+        cin = DROP_C
+        self.up = nn.ModuleList()
+        for w, s in zip(widths, skips):
+            self.up.append(block(cin + s, w))
+            cin = w
+        self.head = nn.Conv2d(cin, N_CLASSES, 1)
+
+    def forward(self, image: torch.Tensor, drop: torch.Tensor) -&gt; torch.Tensor:
+        feats, x = [], image
+        for st in self.stages:
+            x = st(x)
+            feats.append(x)
+        x = feats[-1] * drop  # [B,576,H/32,W/32] × [B,576,1,1]
+        for up, skip in zip(self.up, reversed(feats[:-1])):
+            x = nn.functional.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+            x = up(torch.cat([x, skip], 1))
+        x = nn.functional.interpolate(x, size=image.shape[-2:], mode="bilinear", align_corners=False)
+        return self.head(x)  # logits; export.py appends the softmax</code></pre></figure>
+  <figure class="code"><figcaption>ml/data.py · splits</figcaption><pre><code class="language-python">def splits(labels: str = "masks", seed: int = 0, frac=(0.7, 0.15, 0.15)) -&gt; dict[str, list[str]]:
+    """{'train'|'val'|'test': [sha1, ...]} over label PNGs in ml/data/&lt;labels&gt;, whole sessions per split.
+    labels="masks" = human-approved ground truth; "drafts" = raw SAM output, only for plumbing tests."""
+    session = {r["sha1"]: r["session"] for r in csv.DictReader(open(DATA / "manifest.csv"))}
+    shas = sorted(p.stem for p in (DATA / labels).glob("*.png"))
+    sessions = sorted({session[s] for s in shas})
+    random.Random(seed).shuffle(sessions)
+    n = len(sessions)
+    cut1, cut2 = round(frac[0] * n), round((frac[0] + frac[1]) * n)
+    groups = {"train": set(sessions[:cut1]), "val": set(sessions[cut1:cut2]), "test": set(sessions[cut2:])}
+    out = {k: [s for s in shas if session[s] in g] for k, g in groups.items()}
+    # the file names ARE content hashes, so disjoint names = no photo in two splits
+    assert not (set(out["train"]) &amp; set(out["test"])) and not (set(out["train"]) &amp; set(out["val"]))
+    return out</code></pre></figure>
+  <figure class="code"><figcaption>ml/train.py · soft_dice_loss</figcaption><pre><code class="language-python">def soft_dice_loss(logits: torch.Tensor, target: torch.Tensor) -&gt; torch.Tensor:
+    p = logits.softmax(1)[:, 1:]  # parts only
+    t = torch.nn.functional.one_hot(target, 4).permute(0, 3, 1, 2)[:, 1:].float()
+    inter, total = (p * t).sum((0, 2, 3)), (p + t).sum((0, 2, 3))
+    return 1 - ((2 * inter + 1) / (total + 1)).mean()</code></pre></figure>
+  <h3>Current numbers</h3>
+  <p class="warn"><b>Draft labels.</b> This model was trained and scored on SAM’s unreviewed drafts. These numbers prove the pipeline runs end to end; they are not accuracy. They will be replaced when the model is retrained on reviewed masks.</p><div class="scroll"><table class="num"><thead><tr><th>Part</th><th>Dice</th><th>Median area error</th><th>Inside ±2 SD</th><th>Flies</th></tr></thead><tbody><tr><td>head</td><td>0.532</td><td>43.78%</td><td>0.128</td><td>39</td></tr><tr><td>thorax</td><td>0.631</td><td>26.93%</td><td>0.214</td><td>42</td></tr><tr><td>abdomen</td><td>0.572</td><td>50.34%</td><td>0.208</td><td>48</td></tr><tr><td>body</td><td>0.812</td><td>20.47%</td><td>0.145</td><td>69</td></tr></tbody></table></div>
+<p class="caption">Run <code>20260926-135929</code> · 24 test images from 6 sessions the model never saw · labels: drafts</p>
+  <div class="box"><h3>Try it yourself</h3><p>Train once with a random split instead of a session split, and compare the test scores. The gap between them is how much a leaky split would have lied to you.</p></div>
+</section>
+
+<section class="chapter" id="m09">
+  <div class="chead"><h2>The model in the browser, with error bars</h2><span class="tag">m09-adult</span></div>
+  <p><b>Goal.</b> Run FlyNet on the user’s own GPU and report each part as <i>area ± uncertainty</i>.</p>
+  <ul>
+    <li><b>ONNX Runtime Web</b> tries WebGPU first and falls back to WebAssembly. The CLI loads the same file with <code>onnxruntime-node</code>.</li>
+    <li><b>Monte Carlo dropout.</b> Run 8 passes, each with a random 20% of bottleneck channels switched off. Where the passes agree, the model is confident. The spread of the 8 areas is the ± you report.</li>
+    <li><b>Letterboxing.</b> The model sees a 512×512 square. <code>preprocess</code> shrinks and pads, and every area is scaled back by 1/scale² into original pixels, then into mm².</li>
+  </ul>
+  <figure class="code"><figcaption>packages/core/src/adult.ts · dropMasks</figcaption><pre><code class="language-typescript">// Monte Carlo dropout: each pass switches off a random 20% of the bottleneck channels (and scales the rest
+// up so the average is unchanged). The spread of answers across passes is the model's uncertainty.
+export function dropMasks(T: number, p = 0.2, rand = Math.random) {
+  return Float32Array.from({ length: T * DROP_C }, () =&gt; (rand() &lt; p ? 0 : 1 / (1 - p)));
+}</code></pre></figure>
+  <figure class="code"><figcaption>packages/core/src/adult.ts · postprocess</figcaption><pre><code class="language-typescript">export function postprocess(probs: Float32Array, T: number, box: Letterbox, cal: Calibration) {
+  const N = S * S, perPass = new Uint8Array(T * N), labels = new Uint8Array(N), anyFly = gray(S, S);
+  for (let i = 0; i &lt; N; i++) {
+    const mean = [0, 0, 0, 0];
+    for (let t = 0; t &lt; T; t++) {
+      let best = 0;
+      for (let k = 0; k &lt; 4; k++) {
+        const v = probs[(t * 4 + k) * N + i];
+        mean[k] += v;
+        if (v &gt; probs[(t * 4 + best) * N + i]) best = k;
+      }
+      perPass[t * N + i] = best;
+      if (best) anyFly.data[i] = 1;
+    }
+    labels[i] = mean.indexOf(Math.max(...mean)); // what the overlay shows
+  }
+
+  // Flies = connected blobs of "some pass thought this was fly" (so every pass is counted in the same region).
+  const { labels: inst, comps } = components(open(anyFly, 2));
+  const toPx = 1 / box.scale ** 2, px2 = cal.pxPerMm ** 2, out: Measurement[] = [];
+  comps.filter((c) =&gt; c.area &gt; 0.002 * N).forEach((c, f) =&gt; {
+    const counts = Array.from({ length: T }, () =&gt; [0, 0, 0, 0]);
+    for (let y = c.y; y &lt; c.y + c.h; y++)
+      for (let x = c.x; x &lt; c.x + c.w; x++) {
+        const i = y * S + x;
+        if (inst[i] === c.id) for (let t = 0; t &lt; T; t++) counts[t][perPass[t * N + i]]++;
+      }
+    const bbox: Measurement['bbox'] = [(c.x - box.padX) / box.scale, (c.y - box.padY) / box.scale, c.w / box.scale, c.h / box.scale];
+    const series = [1, 2, 3].map((k) =&gt; counts.map((n) =&gt; n[k])).concat([counts.map((n) =&gt; n[1] + n[2] + n[3])]);
+    (['head', 'thorax', 'abdomen', 'body'] as const).forEach((part, k) =&gt; {
+      const mean = series[k].reduce((a, b) =&gt; a + b, 0) / T;
+      if (!mean) return;
+      const sd = Math.sqrt(series[k].reduce((a, b) =&gt; a + (b - mean) ** 2, 0) / T);
+      const flags = [c.edge &amp;&amp; 'edge', part === 'body' &amp;&amp; sd / mean &gt; 0.1 &amp;&amp; 'uncertain'].filter(Boolean);
+      out.push({ id: f + 1, part, areaPx: Math.round(mean * toPx), areaMm2: (mean * toPx) / px2, sdMm2: (sd * toPx) / px2,
+        bbox, ...(flags.length ? { flag: flags.join(',') } : {}) });
+    });
+  });
+  return { measurements: out, labels };
+}</code></pre></figure>
+  <figure class="code"><figcaption>apps/web/src/model.ts · loadModel</figcaption><pre><code class="language-typescript">export function loadModel() {
+  loading ??= (async () =&gt; {
+    const url = new URL('flynet.onnx', document.baseURI).href;
+    for (const backend of ['webgpu', 'wasm']) {
+      try {
+        const session = await ort.InferenceSession.create(url, { executionProviders: [backend] });
+        const run: RunModel = async (image, drop, T) =&gt; {
+          const out = await session.run({
+            image: new ort.Tensor('float32', image, [T, 3, S, S]),
+            drop: new ort.Tensor('float32', drop, [T, DROP_C, 1, 1]),
+          });
+          return out.probs.data as Float32Array;
+        };
+        return { run, backend };
+      } catch (e) {
+        console.warn(`[flymorph] ${backend} backend unavailable:`, e);
+      }
+    }
+    loading = null;
+    throw new Error('Could not load the adult model (flynet.onnx).');
+  })();
+  return loading;
+}</code></pre></figure>
+  <div class="box pitfall"><h3>Pitfall hit while building this</h3><p>The plan defined each fly from the <i>averaged</i> prediction, then counted every pass inside that region. That hides the disagreement the error bar is supposed to show. A test caught it: a fly the passes disagreed on came out with SD 0. Flies are now the union of all passes.</p></div>
+  <div class="box"><h3>Try it yourself</h3><p>Check the error bars are honest: on the test set, about 95% of true areas should fall inside ±2 SD (<code>coverage_2sd</code> in the metrics). If far fewer do, the model is over-confident. Try more passes or a higher drop rate.</p></div>
+</section>
+
+<section class="chapter" id="m10">
+  <div class="chead"><h2>Ship it</h2><span class="tag">m10-ship</span></div>
+  <ul>
+    <li><code>npm run build</code> makes a static site in <code>apps/web/dist</code>, which GitHub Pages can host for free. The model runs on the visitor’s machine, so there is no server to pay for.</li>
+    <li>The README leads with a GIF of the app measuring a real fly, then quickstart, then the honest limitations.</li>
+    <li>Rebuild this site with <code>node site/build.mjs</code>. It re-reads the code, so the excerpts can’t go stale.</li>
+  </ul>
+  <h3>Known limitations</h3>
+  <ul>
+    <li>Touching flies are measured as one fly, and larvae touching background objects are flagged but not fixed.</li>
+    <li>The scale image must use the same zoom as the photo; nothing can check that for you.</li>
+    <li>The model is trained on one lab’s microscope and backgrounds. New setups need a few new labels.</li>
+  </ul>
+</section>
+
+<section class="chapter" id="ml">
+  <div class="chead"><h2>ML deep dive</h2></div>
+  <h3>Why not just use SAM in the browser?</h3>
+  <p>SAM is ~90 M parameters and needs someone to click on every part of every fly. FlyNet is 1.66 M parameters and needs no clicks. It is a specialist: it only knows flies, and that is all we need. Training a small specialist on a big generalist’s outputs is <b>knowledge distillation</b>. The human review in the middle stops the student from learning the teacher’s mistakes.</p>
+  <h3>Why segmentation and not detection?</h3>
+  <p>A detector draws a box around a fly. We need area, so we need the exact pixels of each part. A per-pixel classifier (semantic segmentation) gives that directly, and connected components split the pixels into individual flies.</p>
+  <h3>Why error bars?</h3>
+  <p>A phenotype paper compares mean body size between genotypes. A blurry or folded fly measured confidently wrong adds noise you can’t see. With MC dropout, each measurement carries its own uncertainty, so you can flag or down-weight doubtful flies instead of trusting them equally.</p>
+  <h3>How the numbers are kept honest</h3>
+  <ul>
+    <li>Only human-approved masks count as ground truth. Draft-trained models are labelled as such everywhere.</li>
+    <li>Test sessions are held out whole, and overlap is checked by content hash, not by filename.</li>
+    <li>Test Dice above 0.98 prints a leakage warning. A number that good is a bug until proven otherwise.</li>
+    <li>Coverage of ±2 SD checks the error bars themselves.</li>
+  </ul>
+</section>
+
+<section class="chapter" id="interview">
+  <div class="chead"><h2>Interview prep</h2></div>
+  <h3>The 60-second version</h3>
+  <p class="lede">“My lab measured fly body size by thresholding photos by hand, with a hardcoded scale. I rebuilt it as a TypeScript tool. Larvae use a classical CV pipeline, and I found the old fixed threshold under-measured by 7–15%. Calibration reads the stage micrometer automatically with an FFT. For adult flies I used Segment Anything to draft head/thorax/abdomen masks, reviewed them myself, and distilled them into a 1.66 M-parameter U-Net that runs in the browser on WebGPU and reports each area with a Monte Carlo dropout error bar. One core library powers both the React app and a Node batch CLI.”</p>
+  <h3>Likely questions</h3>
+  <details><summary>Why TypeScript for an ML project?</summary><p>Training is Python (PyTorch), because that’s the right tool. Inference and everything around it (calibration, measurement, UI, batch CLI) is TypeScript, so it runs anywhere with no install and no server. ONNX is the bridge between the two.</p></details>
+  <details><summary>How do you know the model is accurate?</summary><p>Dice and median area error on imaging sessions the model never saw, against masks I reviewed. The split is by session and checked by content hash. I also check that ~95% of true areas fall inside ±2 SD.</p></details>
+  <details><summary>What was the hardest bug?</summary><p>Scale calibration. Larval segments are periodic, so a larva photo passed as a “scale” at 3903 px/mm. The fix uses the physics of the object: a 1 mm bar spans exactly 10, 20 or 100 tick periods. That check rejects impostors and tells you which tick set you found.</p></details>
+  <details><summary>What would you do next?</summary><p>Separate touching flies (instance segmentation or a watershed on the body mask), add wing area, and use active learning: send the flies with the largest error bars to the review queue first.</p></details>
+  <details><summary>What is knowledge distillation?</summary><p>Training a small model to reproduce a big model’s outputs. Here the big model (SAM) plus human review produced the labels, and the small model learned them well enough to run in a browser tab.</p></details>
+</section>
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script>
+  try { hljs.highlightAll(); } catch (e) { /* plain code is still readable */ }
+</script>
+<script type="module">
+  if (document.querySelector('pre.mermaid') && !document.querySelector('pre.mermaid svg')) {
+    try {
+      const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs');
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light' || document.documentElement.dataset.theme === 'dark';
+      mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral' });
+      await mermaid.run({ querySelector: 'pre.mermaid' });
+    } catch (e) { /* the flowchart source stays visible as text */ }
+  }
+</script>
+
+</html>

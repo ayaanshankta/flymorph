@@ -10,11 +10,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   try {
     let cal: Calibration;
     if (manualPxPerMm) cal = { pxPerMm: manualPxPerMm, confidence: Infinity, method: 'manual' };
-    else if (!scale) throw new Error('Add a scale image, or click the two ends of the bar to calibrate.');
+    else if (!scale) return post({ ok: false, error: 'Add a scale image to calibrate.' });
     else {
       cal = calibrateFromScale(scale);
       if (cal.confidence < MIN_CONFIDENCE)
-        throw new Error('Could not find the micrometer bar automatically. Click its two ends on the scale image.');
+        return post({ ok: false, needsScale: true, error: 'Could not find the micrometer bar automatically. Click its two ends on the scale image.' });
     }
     if (mode === 'calibrate') return post({ ok: true, cal, measurements: [], labels: new Int32Array(0) });
     const { measurements, labels } = measureLarvae(img, cal);

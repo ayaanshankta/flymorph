@@ -2,7 +2,8 @@
 import * as ort from 'onnxruntime-web/webgpu';
 import { S, DROP_C, type RunModel } from '@flymorph/core';
 
-// The .wasm runtime files come from the CDN copy of the exact installed version.
+// The .wasm runtime files come from the CDN copy of the exact installed version. (Letting Vite serve its
+// bundled copy fails in dev: dependency pre-bundling breaks ORT's own path lookup.)
 ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web}/dist/`;
 
 let loading: Promise<{ run: RunModel; backend: string }> | null = null;

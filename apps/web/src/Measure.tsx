@@ -17,7 +17,7 @@ function inWorker(req: WorkerRequest): Promise<Result> {
   return new Promise((resolve, reject) => {
     worker.onmessage = (e) => {
       worker.terminate();
-      e.data.ok ? resolve(e.data) : reject(new Error(e.data.error));
+      e.data.ok ? resolve(e.data) : reject(Object.assign(new Error(e.data.error), { needsScale: !!e.data.needsScale }));
     };
     worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
     worker.postMessage(req);
@@ -48,13 +48,14 @@ export function Measure() {
   const [clicks, setClicks] = useState<[number, number][]>([]);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState('');
+  const [askScale, setAskScale] = useState(false); // only when automatic calibration failed
   const [busy, setBusy] = useState('');
 
   const measure = async (manualPxPerMm?: number) => {
     if (!img) return;
-    setBusy('Measuring…'); setError(''); setResult(null);
+    setBusy('Measuring…'); setError(''); setAskScale(false); setResult(null);
     try { setResult(await run(mode, img.rgb, scale, manualPxPerMm)); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError((e as Error).message); setAskScale(!!(e as { needsScale?: boolean }).needsScale); }
     finally { setBusy(''); }
   };
 
@@ -96,7 +97,7 @@ export function Measure() {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {error && scale && (
+      {askScale && scale && (
         <>
           <p>Click the left end, then the right end of the 1 mm bar ({clicks.length}/2):</p>
           <Overlay img={scale} onClick={onScaleClick}
