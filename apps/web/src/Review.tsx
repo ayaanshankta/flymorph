@@ -30,7 +30,7 @@ export function Review() {
   const [points, setPoints] = useState<Point[]>([]);
   const [status, setStatus] = useState('');
   const [confirmBad, setConfirmBad] = useState(false); // approving a fly that fails the anatomy check needs 2 presses
-  const [lastFix, setLastFix] = useState<{ part: number; pick: number } | null>(null); // for Smaller / Bigger
+  const [lastFix, setLastFix] = useState<{ part: number; pick: number; pts: Point[] } | null>(null); // for Smaller / Bigger
   const current = queue[0];
 
   const refresh = useCallback(async () => {
@@ -53,7 +53,8 @@ export function Review() {
   }, [current?.sha]);
 
   // part is only used by 'refine': the fix names its part at the moment it is applied (no hidden mode).
-  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'undo' | 'skip', part = 0, pick = 0) => {
+  const act = useCallback(async (kind: 'approve' | 'reject' | 'flip' | 'refine' | 'reset' | 'undo' | 'skip', part = 0, pick = 0,
+    pts: Point[] = points) => {
     if (!current) return;
     if (kind === 'skip') { setQueue((q) => [...q.slice(1), q[0]]); return; }
     if (kind === 'approve' && img && labels && misorderedFlies(labels, img.w, img.h).length && !confirmBad) {
@@ -61,14 +62,14 @@ export function Review() {
       setStatus('A fly here has its head and abdomen on the same side of the thorax (marked ✕), so a part is probably mislabelled. Fix it, or press Approve again to approve anyway.');
       return;
     }
-    if (kind === 'refine' && !points.length) { setStatus('First click the spots on the fly, then choose what they are.'); return; }
+    if (kind === 'refine' && !pts.length) { setStatus('First click the spots on the fly, then choose what they are.'); return; }
     setStatus(kind === 'approve' || kind === 'reject' || kind === 'undo' ? '' : 'SAM is thinking…');
-    const res = await post(`/api/${kind}`, { sha: current.sha, part, points, pick });
+    const res = await post(`/api/${kind}`, { sha: current.sha, part, points: pts, pick });
     if (kind === 'undo' && !res.ok) { setStatus('Nothing to undo on this fly.'); return; }
     if (kind === 'flip' || kind === 'refine' || kind === 'reset' || kind === 'undo') {
       setLabels(await loadLabels(current.sha)); setStatus(''); setConfirmBad(false);
       // keep the clicks after a fix so Smaller / Bigger can re-ask SAM with the same spots
-      if (kind === 'refine') setLastFix({ part, pick }); else { setPoints([]); setLastFix(null); }
+      if (kind === 'refine') setLastFix({ part, pick, pts }); else setPoints([]);
     }
     else refresh();
   }, [current, points, refresh, img, labels, confirmBad]);
@@ -78,6 +79,9 @@ export function Review() {
       const k = e.key.toLowerCase();
       const map: Record<string, () => void> = {
         z: () => act('undo'),
+        '-': () => lastFix && lastFix.pick > 0 && act('refine', lastFix.part, lastFix.pick - 1, lastFix.pts),
+        '=': () => lastFix && lastFix.pick < 2 && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts),
+        '+': () => lastFix && lastFix.pick < 2 && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts),
         a: () => act('approve'), r: () => act('reject'), x: () => act('flip'), s: () => act('skip'),
         '1': () => act('refine', 1), '2': () => act('refine', 2), '3': () => act('refine', 3), escape: () => setPoints([]),
       };
@@ -85,7 +89,7 @@ export function Review() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [act]);
+  }, [act, lastFix]);
 
   const bad = useMemo(() => (img && labels ? misorderedFlies(labels, img.w, img.h) : []), [img, labels]);
   const boxes = [
@@ -116,11 +120,11 @@ export function Review() {
               Make {PART_NAMES[k]} ({k})
             </button>
           ))}
-          {lastFix && <>
-            <button onClick={() => act('refine', lastFix.part, lastFix.pick - 1)} disabled={lastFix.pick === 0}>Smaller</button>
-            <button onClick={() => act('refine', lastFix.part, lastFix.pick + 1)} disabled={lastFix.pick === 2}>Bigger</button>
-          </>}
-          <button onClick={() => { setPoints([]); setLastFix(null); }} disabled={!points.length}>Clear clicks</button>
+          <button onClick={() => lastFix && act('refine', lastFix.part, lastFix.pick - 1, lastFix.pts)} disabled={!lastFix || lastFix.pick === 0}
+            title="Make the last fix use SAM's next smaller outline">Smaller (−)</button>
+          <button onClick={() => lastFix && act('refine', lastFix.part, lastFix.pick + 1, lastFix.pts)} disabled={!lastFix || lastFix.pick === 2}
+            title="Make the last fix use SAM's next bigger outline">Bigger (+)</button>
+          <button onClick={() => setPoints([])} disabled={!points.length}>Clear clicks</button>
           <button onClick={() => act('undo')}>Undo (Z)</button>
           <button onClick={() => act('reset')}>Reset to SAM draft</button>
         </div>
@@ -129,7 +133,7 @@ export function Review() {
       {!current && !status && <p>Queue empty. Nice.</p>}
       {img && labels && (
         <Overlay img={img} labels={labels} color={color} boxes={boxes}
-          onClick={(x, y, e) => { setLastFix(null); setPoints((p) => [...p, [x, y, e.shiftKey ? 0 : 1]]); }} />
+          onClick={(x, y, e) => setPoints((p) => [...p, [x, y, e.shiftKey ? 0 : 1]])} />
       )}
     </section>
   );
