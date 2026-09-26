@@ -50,9 +50,8 @@ def valid(sha: str) -> str:
 def flies(sha: str) -> tuple[list[tuple[int, int, int, int]], np.ndarray]:
     """Fly boxes (left to right) + an owner map: owner[y, x] = index of the fly whose body is nearest.
 
-    Boxes are generous (half the fly's size of padding; the whole photo when there is one fly) so pale
-    abdomens and legs are never cut off. Edits are limited to box ∩ owner == fly, so a big box still
-    can't touch the neighbouring fly."""
+    A fly's box covers every pixel nearer to it than to any other fly (the whole photo when there is one
+    fly), so pale abdomens and legs are never cut off. Edits are limited to box ∩ owner == fly."""
     bgr = cv2.imread(str(DATA / "img" / f"{sha}.jpg"))
     h, w = bgr.shape[:2]
     blobs = fly_blobs(bgr)
@@ -60,13 +59,13 @@ def flies(sha: str) -> tuple[list[tuple[int, int, int, int]], np.ndarray]:
         return [(0, 0, w, h)], np.zeros((h, w), np.int8)
     blobs.sort(key=lambda b: np.nonzero(b)[1].min())
     dist = np.stack([cv2.distanceTransform((~b).astype(np.uint8), cv2.DIST_L2, 5) for b in blobs])
+    owner = dist.argmin(0).astype(np.int8)
+    # frame = everything nearer to this fly than to any other, so pale abdomens and legs are never cut off
     boxes = []
-    for b in blobs:
-        ys, xs = np.nonzero(b)
-        pad = int(0.5 * max(np.ptp(xs), np.ptp(ys)))
-        boxes.append((int(max(0, xs.min() - pad)), int(max(0, ys.min() - pad)),
-                      int(min(w, xs.max() + pad + 1)), int(min(h, ys.max() + pad + 1))))
-    return boxes, dist.argmin(0).astype(np.int8)
+    for i in range(len(blobs)):
+        ys, xs = np.nonzero(owner == i)
+        boxes.append((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+    return boxes, owner
 
 
 def fly_boxes(sha: str) -> list[tuple[int, int, int, int]]:
